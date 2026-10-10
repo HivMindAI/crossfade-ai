@@ -28,6 +28,6 @@
 - `npm run format:check`, `npm run typecheck`, `npm run lint`, and `npm run build`: passed. The production build prerendered `/` and kept `/api/plan` dynamic. The Windows sandbox blocked child-process creation for Vitest and Next's TypeScript worker (`spawn EPERM`); the authorized unsandboxed reruns passed.
 - `npm test`: 49/49 passed across six files. The 15 ms delayed synthetic transport measured eight source calls, a peak of three concurrent calls, and 48 ms planner elapsed time on this local run. This fixture timing is not a live Qloo latency estimate.
 - `npm run test:e2e`: 5/5 passed in locally installed Chrome, covering repair, provenance, no-solution gaps, total-program cap, and no-key live behavior.
-- Milestone 2 PR CI result: pending after push.
+- [Milestone 2 PR CI run #6](https://github.com/HivMindAI/crossfade-ai/actions/runs/38070292125) completed successfully for commit `4872b7e56c72299bf88e16248c42f6b16851c8a4`. The `verify` job passed checkout/setup-node v7, `npm ci`, production audit, typecheck, format check, lint, unit/integration tests, build, Chromium installation, and browser tests.
 
 Record future live checks here with date, environment, endpoint status, returned entity count, and redacted failure details. Do not store a key or raw Qloo payload.

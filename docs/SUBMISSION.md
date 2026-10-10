@@ -23,7 +23,7 @@ After a verified public deployment, replace the synthetic-mode demonstration wit
 - [x] Local synthetic primary journey
 - [x] Server-only Qloo client and live smoke script
 - [x] Automated test and CI configuration; [initial PR CI passed](https://github.com/HivMindAI/crossfade-ai/actions/runs/38065856447)
-- [ ] Milestone 2 PR CI reviewed after the hardening commit
+- [x] [Milestone 2 PR CI reviewed and passed](https://github.com/HivMindAI/crossfade-ai/actions/runs/38070292125) for hardening commit `4872b7e`
 - [ ] Authenticated Qloo search and insights verified
 - [ ] Film runtime units and complete program timing verified against live metadata
 - [ ] Public screening rights, availability, ticketing, and venue arrangements verified

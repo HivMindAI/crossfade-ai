@@ -1,0 +1,974 @@
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+import {
+  ArrowDownRight,
+  ArrowRight,
+  ArrowUpRight,
+  BookOpen,
+  Check,
+  CircleHelp,
+  Film,
+  Headphones,
+  LoaderCircle,
+  RotateCcw,
+  Sparkles,
+  X,
+} from "lucide-react";
+import {
+  DOMAINS,
+  type Blueprint,
+  type Domain,
+  type Interest,
+  type PlanRequest,
+  type PlanResult,
+} from "@/lib/model";
+import { syntheticCatalog } from "@/lib/synthetic";
+
+const defaults: PlanRequest = {
+  mode: "synthetic",
+  audiences: [
+    {
+      name: "The improvisers",
+      interests: [
+        { name: "Miles Davis", type: "artist" },
+        { name: "Spirited Away", type: "movie" },
+      ],
+    },
+    {
+      name: "The shapeshifters",
+      interests: [
+        { name: "Beyoncé", type: "artist" },
+        { name: "Everything Everywhere All at Once", type: "movie" },
+      ],
+    },
+  ],
+  constraints: {
+    maxMovieMinutes: 120,
+    allowedRatings: ["G", "PG", "PG-13"],
+    excludedIds: [],
+  },
+};
+
+const presets = [
+  {
+    label: "Jazz × new worlds",
+    a: ["Miles Davis", "Spirited Away"],
+    b: ["Beyoncé", "Everything Everywhere All at Once"],
+  },
+  {
+    label: "Soul × sci-fi",
+    a: ["Nina Simone", "The Matrix"],
+    b: ["Beyoncé", "Spirited Away"],
+  },
+  {
+    label: "Cinema × sound",
+    a: ["Spirited Away", "The Matrix"],
+    b: ["Miles Davis", "Nina Simone"],
+  },
+];
+const icons = { artist: Headphones, movie: Film, book: BookOpen };
+const actNames = {
+  artist: "01 / LISTEN",
+  movie: "02 / WATCH",
+  book: "03 / DISCUSS",
+};
+
+function copied<T>(value: T): T {
+  return structuredClone(value);
+}
+function labelDomain(domain: Domain) {
+  return domain === "artist" ? "Music" : domain === "movie" ? "Film" : "Books";
+}
+
+export function Workspace() {
+  const [input, setInput] = useState<PlanRequest>(defaults);
+  const [result, setResult] = useState<PlanResult | null>(null);
+  const [selected, setSelected] = useState(0);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [view, setView] = useState<"blueprint" | "evidence" | "trace">(
+    "blueprint",
+  );
+  const [replacements, setReplacements] = useState<string[]>([]);
+  const [disambiguation, setDisambiguation] = useState<{
+    side: number;
+    interest: Interest;
+    matches: { id: string; name: string; domain: Domain }[];
+  } | null>(null);
+  const resultsRef = useRef<HTMLElement>(null);
+
+  async function generate(next: PlanRequest, previous?: Blueprint) {
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    setDisambiguation(null);
+    try {
+      const response = await fetch("/api/plan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(next),
+      });
+      const body = await response.json();
+      if (!response.ok) {
+        if (body.error === "AMBIGUOUS_ENTITY" && body.details?.matches?.length)
+          setDisambiguation(body.details);
+        setError(body.message || "Planning failed. Please try again.");
+        return;
+      }
+      setResult(body as PlanResult);
+      setSelected(0);
+      setView("blueprint");
+      if (previous && body.options?.[0]) {
+        const changes = previous.candidates.flatMap((candidate, index) =>
+          candidate.entity.id !== body.options[0].candidates[index].entity.id
+            ? [
+                `${labelDomain(candidate.entity.domain)}: ${candidate.entity.name} → ${body.options[0].candidates[index].entity.name}`,
+              ]
+            : [],
+        );
+        setReplacements(changes);
+        setNotice(
+          changes.length
+            ? "The plan was repaired. Review what changed below."
+            : "The plan still satisfies the updated rules.",
+        );
+      } else {
+        setReplacements([]);
+        setNotice("Evidence gathered and alternatives evaluated.");
+      }
+      setTimeout(
+        () =>
+          resultsRef.current?.scrollIntoView({
+            behavior: "smooth",
+            block: "start",
+          }),
+        100,
+      );
+    } catch {
+      setError(
+        "Could not reach the planner. Check your connection and try again.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function updateAudience(
+    side: number,
+    field: "name" | "interests",
+    value: string | Interest[],
+  ) {
+    setInput((current) => {
+      const next = copied(current);
+      if (field === "name") next.audiences[side].name = value as string;
+      else next.audiences[side].interests = value as Interest[];
+      return next;
+    });
+  }
+  function updateInterest(
+    side: number,
+    index: number,
+    patch: Partial<Interest>,
+  ) {
+    const next = copied(input);
+    next.audiences[side].interests[index] = {
+      ...next.audiences[side].interests[index],
+      ...patch,
+    };
+    setInput(next);
+  }
+  function selectPreset(index: number) {
+    const preset = presets[index];
+    const next = copied(input);
+    next.audiences[0].interests = preset.a.map((name) => ({
+      name,
+      type: syntheticCatalog.find((item) => item.name === name)!.domain,
+    }));
+    next.audiences[1].interests = preset.b.map((name) => ({
+      name,
+      type: syntheticCatalog.find((item) => item.name === name)!.domain,
+    }));
+    next.constraints.excludedIds = [];
+    setInput(next);
+    setResult(null);
+    setNotice(null);
+    setReplacements([]);
+  }
+  function reject(id: string) {
+    const next = copied(input);
+    next.constraints.excludedIds = [
+      ...new Set([...next.constraints.excludedIds, id]),
+    ];
+    setInput(next);
+    void generate(next, result?.options[selected]);
+  }
+  function changeMode(mode: PlanRequest["mode"]) {
+    const next = copied(input);
+    next.mode = mode;
+    next.constraints.excludedIds = [];
+    next.audiences.forEach((audience) =>
+      audience.interests.forEach((interest) => delete interest.id),
+    );
+    setInput(next);
+    setResult(null);
+    setNotice(null);
+  }
+  function chooseMatch(match: { id: string; name: string; domain: Domain }) {
+    if (!disambiguation) return;
+    const next = copied(input);
+    const index = next.audiences[disambiguation.side].interests.findIndex(
+      (item) =>
+        item.name === disambiguation.interest.name &&
+        item.type === disambiguation.interest.type,
+    );
+    if (index < 0) return;
+    next.audiences[disambiguation.side].interests[index] = {
+      name: match.name,
+      type: match.domain,
+      id: match.id,
+    };
+    setInput(next);
+    setDisambiguation(null);
+    setError(null);
+  }
+  const active = result?.options[selected];
+
+  useEffect(() => {
+    document.documentElement.dataset.mode = input.mode;
+  }, [input.mode]);
+
+  return (
+    <div className="site-shell">
+      <header className="topbar">
+        <a className="brand" href="#top" aria-label="CROSSFADE home">
+          <span className="brand-mark">
+            <span />
+          </span>
+          <span>
+            CROSSFADE<span className="brand-dot">.</span>
+          </span>
+        </a>
+        <nav aria-label="Primary">
+          <a href="#how-it-works">How it works</a>
+          <a href="#studio">The studio</a>
+          <a href="#evidence">Evidence</a>
+        </nav>
+        <a className="top-cta" href="#studio">
+          Enter the studio <ArrowUpRight size={16} />
+        </a>
+      </header>
+
+      <main id="top">
+        <section className="hero" aria-labelledby="hero-title">
+          <div className="hero-copy">
+            <div className="eyebrow">
+              <span className="eyebrow-line" /> AGENTIC CULTURAL NEGOTIATION
+              INTELLIGENCE
+            </div>
+            <h1 id="hero-title">
+              Different tastes.
+              <br />
+              <em>Better together.</em>
+            </h1>
+            <p>
+              Bring two worlds into the same room. CROSSFADE finds cultural
+              common ground, builds an experience around it, and shows exactly
+              why each choice belongs.
+            </p>
+            <div className="hero-actions">
+              <a className="button button-primary" href="#studio">
+                Build a shared experience <ArrowUpRight size={19} />
+              </a>
+              <a className="text-link" href="#how-it-works">
+                Explore the method <ArrowDownRight size={18} />
+              </a>
+            </div>
+            <div className="hero-note">
+              <span className="pulse-dot" /> Development preview · Synthetic
+              evidence is clearly labeled
+            </div>
+          </div>
+          <div className="hero-art" aria-hidden="true">
+            <div className="orbit orbit-one" />
+            <div className="orbit orbit-two" />
+            <div className="orbit orbit-three" />
+            <div className="record record-a">
+              <span>
+                GROUP A<br />
+                THE IMPROVISERS
+              </span>
+            </div>
+            <div className="record record-b">
+              <span>
+                GROUP B<br />
+                THE SHAPESHIFTERS
+              </span>
+            </div>
+            <div className="hero-intersection">
+              <Sparkles size={27} strokeWidth={1.5} />
+              <span>
+                SHARED
+                <br />
+                GROUND
+              </span>
+            </div>
+            <div className="art-caption">TWO AUDIENCES / ONE EXPERIENCE</div>
+          </div>
+        </section>
+
+        <section
+          className="method"
+          id="how-it-works"
+          aria-labelledby="method-title"
+        >
+          <div className="section-label">01 / THE METHOD</div>
+          <div className="method-head">
+            <h2 id="method-title">
+              A bridge you can <em>inspect.</em>
+            </h2>
+            <p>
+              Every suggestion has a trail. See where each audience connects,
+              how constraints shape the outcome, and what changes when you say
+              no.
+            </p>
+          </div>
+          <div className="method-grid">
+            <div>
+              <span className="method-number">01</span>
+              <h3>Listen to both sides</h3>
+              <p>
+                Define separate cultural interests for each audience. No
+                averages that erase the differences.
+              </p>
+            </div>
+            <div>
+              <span className="method-number">02</span>
+              <h3>Find the overlap</h3>
+              <p>
+                Compare results by shared entity IDs and within-query order,
+                across music, film, and books.
+              </p>
+            </div>
+            <div>
+              <span className="method-number">03</span>
+              <h3>Negotiate, then repair</h3>
+              <p>
+                Explore alternatives, reject a component, or tighten a rule. The
+                planner reevaluates the whole sequence.
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <section className="studio" id="studio" aria-labelledby="studio-title">
+          <div className="studio-heading">
+            <div>
+              <div className="section-label">02 / THE STUDIO</div>
+              <h2 id="studio-title">
+                Make room for <em>everyone.</em>
+              </h2>
+            </div>
+            <span className="studio-index">CROSSFADE / WORKSPACE 001</span>
+          </div>
+          <div className="preview-banner" role="note">
+            <span className="preview-icon">
+              {input.mode === "synthetic" ? "S" : "Q"}
+            </span>
+            <div>
+              <strong>
+                {input.mode === "synthetic"
+                  ? "SYNTHETIC DEVELOPMENT PREVIEW"
+                  : "LIVE QLOO MODE"}
+              </strong>
+              <p>
+                {input.mode === "synthetic"
+                  ? "Demo associations and candidate entities are invented fixtures. They are not Qloo results. Live mode requires a Qloo API key."
+                  : "Live requests use the server-side hackathon key. If the key or Qloo service is unavailable, no fixture results will be shown."}
+              </p>
+            </div>
+          </div>
+          <div className="mode-row">
+            <span className="field-caption">DATA SOURCE</span>
+            <div className="segmented" role="group" aria-label="Data source">
+              <button
+                className={input.mode === "synthetic" ? "active" : ""}
+                onClick={() => changeMode("synthetic")}
+              >
+                Synthetic demo
+              </button>
+              <button
+                className={input.mode === "live" ? "active" : ""}
+                onClick={() => changeMode("live")}
+              >
+                Live Qloo
+              </button>
+            </div>
+            <span className="mode-help">
+              {input.mode === "live"
+                ? "Server-side key required. Results are never mocked."
+                : "Explore the complete flow without a key."}
+            </span>
+          </div>
+          {input.mode === "synthetic" && (
+            <div className="preset-row">
+              <span className="field-caption">STARTING POINTS</span>
+              {presets.map((preset, index) => (
+                <button
+                  key={preset.label}
+                  className="preset"
+                  onClick={() => selectPreset(index)}
+                >
+                  {preset.label} <ArrowUpRight size={14} />
+                </button>
+              ))}
+            </div>
+          )}
+          <div className="audience-grid">
+            {input.audiences.map((audience, side) => (
+              <div className={`audience-card audience-${side}`} key={side}>
+                <div className="audience-top">
+                  <div>
+                    <span className="audience-code">AUDIENCE 0{side + 1}</span>
+                    <div className="audience-number">
+                      0{side + 1}
+                      <span>.</span>
+                    </div>
+                  </div>
+                  <span className="audience-symbol">
+                    {side === 0 ? "◒" : "◓"}
+                  </span>
+                </div>
+                <label className="field-label" htmlFor={`audience-${side}`}>
+                  Give this group a name
+                </label>
+                <input
+                  id={`audience-${side}`}
+                  className="name-input"
+                  value={audience.name}
+                  maxLength={45}
+                  onChange={(event) =>
+                    updateAudience(side, "name", event.target.value)
+                  }
+                />
+                <div className="interest-heading">
+                  <span className="field-label">Cultural touchpoints</span>
+                  <span>{audience.interests.length}/3</span>
+                </div>
+                <div className="interests">
+                  {audience.interests.map((interest, index) => (
+                    <div className="interest-row" key={index}>
+                      {input.mode === "synthetic" ? (
+                        <select
+                          aria-label={`${audience.name} interest ${index + 1}`}
+                          value={interest.name}
+                          onChange={(event) => {
+                            const item = syntheticCatalog.find(
+                              (entry) => entry.name === event.target.value,
+                            )!;
+                            updateInterest(side, index, {
+                              name: item.name,
+                              type: item.domain,
+                              id: undefined,
+                            });
+                          }}
+                        >
+                          {syntheticCatalog.map((item) => (
+                            <option key={item.id}>{item.name}</option>
+                          ))}
+                        </select>
+                      ) : (
+                        <>
+                          <input
+                            aria-label={`${audience.name} interest ${index + 1}`}
+                            value={interest.name}
+                            maxLength={80}
+                            onChange={(event) =>
+                              updateInterest(side, index, {
+                                name: event.target.value,
+                                id: undefined,
+                              })
+                            }
+                          />
+                          <select
+                            aria-label={`${audience.name} interest ${index + 1} type`}
+                            value={interest.type}
+                            onChange={(event) =>
+                              updateInterest(side, index, {
+                                type: event.target.value as Domain,
+                                id: undefined,
+                              })
+                            }
+                          >
+                            {DOMAINS.map((domain) => (
+                              <option key={domain} value={domain}>
+                                {labelDomain(domain)}
+                              </option>
+                            ))}
+                          </select>
+                        </>
+                      )}
+                      <button
+                        className="icon-button"
+                        aria-label={`Remove ${interest.name}`}
+                        disabled={audience.interests.length === 1}
+                        onClick={() =>
+                          updateAudience(
+                            side,
+                            "interests",
+                            audience.interests.filter((_, i) => i !== index),
+                          )
+                        }
+                      >
+                        <X size={15} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+                <button
+                  className="add-interest"
+                  disabled={audience.interests.length >= 3}
+                  onClick={() =>
+                    updateAudience(side, "interests", [
+                      ...audience.interests,
+                      input.mode === "synthetic"
+                        ? {
+                            name: syntheticCatalog[0].name,
+                            type: syntheticCatalog[0].domain,
+                          }
+                        : { name: "", type: "artist" },
+                    ])
+                  }
+                >
+                  + Add a touchpoint
+                </button>
+              </div>
+            ))}
+          </div>
+          <div className="constraints-card">
+            <div className="constraint-title">
+              <span className="constraint-icon">✳</span>
+              <div>
+                <span className="field-caption">NON-NEGOTIABLES</span>
+                <h3>Set the boundaries.</h3>
+              </div>
+            </div>
+            <div className="constraint-controls">
+              <label>
+                Maximum film length{" "}
+                <span>{input.constraints.maxMovieMinutes} min</span>
+                <input
+                  type="range"
+                  min="60"
+                  max="180"
+                  step="5"
+                  value={input.constraints.maxMovieMinutes}
+                  onChange={(event) =>
+                    setInput((current) => ({
+                      ...current,
+                      constraints: {
+                        ...current.constraints,
+                        maxMovieMinutes: Number(event.target.value),
+                      },
+                    }))
+                  }
+                />
+              </label>
+              <fieldset>
+                <legend>Allowed film ratings</legend>
+                <div className="rating-list">
+                  {(["G", "PG", "PG-13", "R", "NC-17"] as const).map(
+                    (rating) => (
+                      <label key={rating}>
+                        <input
+                          type="checkbox"
+                          checked={input.constraints.allowedRatings.includes(
+                            rating,
+                          )}
+                          onChange={(event) => {
+                            const next = copied(input);
+                            next.constraints.allowedRatings = event.target
+                              .checked
+                              ? [...next.constraints.allowedRatings, rating]
+                              : next.constraints.allowedRatings.filter(
+                                  (item) => item !== rating,
+                                );
+                            setInput(next);
+                          }}
+                        />
+                        <span>{rating}</span>
+                      </label>
+                    ),
+                  )}
+                </div>
+              </fieldset>
+            </div>
+            {input.constraints.excludedIds.length > 0 && (
+              <button
+                className="reset-exclusions"
+                onClick={() =>
+                  setInput((current) => ({
+                    ...current,
+                    constraints: { ...current.constraints, excludedIds: [] },
+                  }))
+                }
+              >
+                <RotateCcw size={14} /> Clear{" "}
+                {input.constraints.excludedIds.length} rejection(s)
+              </button>
+            )}
+          </div>
+          <div className="run-row">
+            <div className="run-note">
+              <Sparkles size={20} />
+              <span>Search → compare → evaluate → verify → repair</span>
+            </div>
+            <button
+              className="button button-dark"
+              disabled={busy}
+              onClick={() => void generate(input, active)}
+            >
+              {busy ? (
+                <>
+                  <LoaderCircle className="spin" size={18} /> Negotiating...
+                </>
+              ) : (
+                <>
+                  {result ? "Repair the experience" : "Find the shared ground"}
+                  <ArrowUpRight size={19} />
+                </>
+              )}
+            </button>
+          </div>
+          {error && (
+            <div className="error-box" role="alert">
+              <CircleHelp size={19} />
+              <span>{error}</span>
+            </div>
+          )}
+          {disambiguation && (
+            <div className="match-box">
+              <strong>Choose the intended entity</strong>
+              <div>
+                {disambiguation.matches.map((match) => (
+                  <button key={match.id} onClick={() => chooseMatch(match)}>
+                    {match.name} <small>{match.id}</small>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </section>
+
+        <section
+          className="results"
+          id="evidence"
+          ref={resultsRef}
+          aria-labelledby="results-title"
+        >
+          <div className="results-head">
+            <div>
+              <div className="section-label">03 / THE BLUEPRINT</div>
+              <h2 id="results-title">
+                The art of the <em>in-between.</em>
+              </h2>
+            </div>
+            <span className="results-meta">
+              {result
+                ? `${result.options.length} VIABLE PATH${result.options.length === 1 ? "" : "S"}`
+                : "AWAITING YOUR AUDIENCES"}
+            </span>
+          </div>
+          {!result ? (
+            <div className="empty-state">
+              <div className="empty-orbit">
+                <span>✳</span>
+              </div>
+              <h3>Your shared experience begins here.</h3>
+              <p>
+                Choose two audiences above and run the negotiation to see an
+                evidence-backed blueprint.
+              </p>
+              <a href="#studio" className="text-link">
+                Configure audiences <ArrowUpRight size={17} />
+              </a>
+            </div>
+          ) : (
+            <>
+              {notice && (
+                <div className="notice" role="status">
+                  <Check size={17} />
+                  {notice}
+                </div>
+              )}
+              {result.warning && (
+                <div className="source-warning">
+                  SYNTHETIC / NOT REAL QLOO DATA{" "}
+                  <span>
+                    All relationships in this preview are invented for
+                    development.
+                  </span>
+                </div>
+              )}
+              {replacements.length > 0 && (
+                <div className="change-log">
+                  <strong>WHAT CHANGED</strong>
+                  {replacements.map((change) => (
+                    <span key={change}>{change}</span>
+                  ))}
+                </div>
+              )}
+              {result.status === "no-solution" ? (
+                <div className="no-solution">
+                  <h3>No honest bridge under these rules.</h3>
+                  <p>
+                    At least one experience component lacks shared evidence or
+                    fails a hard constraint. Loosen the film rule, clear a
+                    rejection, or change interests, then repair the plan.
+                  </p>
+                  <a href="#studio" className="button button-primary">
+                    Adjust the inputs <ArrowUpRight size={18} />
+                  </a>
+                </div>
+              ) : (
+                <>
+                  <div
+                    className="option-picker"
+                    role="tablist"
+                    aria-label="Experience alternatives"
+                  >
+                    {result.options.map((option, index) => (
+                      <button
+                        key={option.id}
+                        role="tab"
+                        aria-selected={selected === index}
+                        className={selected === index ? "selected" : ""}
+                        onClick={() => {
+                          setSelected(index);
+                          setView("blueprint");
+                        }}
+                      >
+                        PATH 0{index + 1}
+                        <span>
+                          {index === 0 ? "Most balanced" : "Alternative"}
+                        </span>
+                        <ArrowRight size={17} />
+                      </button>
+                    ))}
+                  </div>
+                  <div className="result-layout">
+                    <div className="plan-panel">
+                      <div className="plan-head">
+                        <div>
+                          <span className="field-caption">
+                            SHARED EXPERIENCE / OPTION 0{selected + 1}
+                          </span>
+                          <h3>{active?.title}</h3>
+                          <p>{active?.rationale}</p>
+                        </div>
+                        <span className="plan-badge">3 ACTS</span>
+                      </div>
+                      <div
+                        className="plan-tabs"
+                        role="tablist"
+                        aria-label="Plan detail"
+                      >
+                        <button
+                          role="tab"
+                          aria-selected={view === "blueprint"}
+                          className={view === "blueprint" ? "active" : ""}
+                          onClick={() => setView("blueprint")}
+                        >
+                          Blueprint
+                        </button>
+                        <button
+                          role="tab"
+                          aria-selected={view === "evidence"}
+                          className={view === "evidence" ? "active" : ""}
+                          onClick={() => setView("evidence")}
+                        >
+                          Evidence
+                        </button>
+                        <button
+                          role="tab"
+                          aria-selected={view === "trace"}
+                          className={view === "trace" ? "active" : ""}
+                          onClick={() => setView("trace")}
+                        >
+                          Decision trace
+                        </button>
+                      </div>
+                      {view === "blueprint" && (
+                        <div className="acts">
+                          {active?.candidates.map((candidate) => {
+                            const Icon = icons[candidate.entity.domain];
+                            return (
+                              <div className="act" key={candidate.entity.id}>
+                                <div className="act-icon">
+                                  <Icon size={20} />
+                                </div>
+                                <div className="act-body">
+                                  <span className="act-label">
+                                    {actNames[candidate.entity.domain]}
+                                  </span>
+                                  <h4>{candidate.entity.name}</h4>
+                                  <p>
+                                    {candidate.entity.domain === "artist"
+                                      ? "Open with a listening moment that gives both groups a familiar entry point."
+                                      : candidate.entity.domain === "movie"
+                                        ? "Watch together, then compare what each audience noticed."
+                                        : "Use a short reading prompt to turn shared taste into conversation."}
+                                  </p>
+                                  <div className="act-meta">
+                                    <span>
+                                      {candidate.entity.domain === "movie" &&
+                                      candidate.entity.duration
+                                        ? `${candidate.entity.duration} MIN · ${candidate.entity.contentRating}`
+                                        : labelDomain(candidate.entity.domain)}
+                                    </span>
+                                    <span>Appears for both audiences</span>
+                                  </div>
+                                </div>
+                                <button
+                                  className="reject-button"
+                                  disabled={busy}
+                                  onClick={() => reject(candidate.entity.id)}
+                                  title={`Reject ${candidate.entity.name}`}
+                                >
+                                  <X size={14} /> Reject
+                                </button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                      {view === "evidence" && (
+                        <div className="evidence-list">
+                          {active?.candidates.map((candidate) => (
+                            <div
+                              className="evidence-item"
+                              key={candidate.entity.id}
+                            >
+                              <div className="evidence-top">
+                                <strong>{candidate.entity.name}</strong>
+                                <span
+                                  className={
+                                    result.mode === "synthetic"
+                                      ? "tag-synthetic"
+                                      : "tag-live"
+                                  }
+                                >
+                                  {result.mode === "synthetic"
+                                    ? "SYNTHETIC FIXTURE"
+                                    : "QLOO RESULT"}
+                                </span>
+                              </div>
+                              <p>{candidate.explanation}</p>
+                              <div className="rank-pair">
+                                <span>
+                                  {input.audiences[0].name}:{" "}
+                                  <b>#{candidate.ranks[0]}</b>
+                                </span>
+                                <span>
+                                  {input.audiences[1].name}:{" "}
+                                  <b>#{candidate.ranks[1]}</b>
+                                </span>
+                              </div>
+                              <small>
+                                {result.mode === "synthetic"
+                                  ? "These invented fixtures contain no Qloo explainability metadata."
+                                  : candidate.entity.explainability ===
+                                      "available"
+                                    ? "Qloo supplied explainability metadata; the interface does not treat it as causal proof. Raw datasets and credentials are omitted."
+                                    : "Per-result explainability unavailable. Raw datasets and credentials are omitted."}
+                              </small>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      {view === "trace" && (
+                        <div className="trace-list">
+                          {result.audit.map((action, index) => (
+                            <div className="trace-item" key={index}>
+                              <span className="trace-index">0{index + 1}</span>
+                              <div>
+                                <strong>{action.step}</strong>
+                                <p>{action.detail}</p>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    <aside className="insight-panel">
+                      <div className="insight-kicker">WHY THIS WORKS</div>
+                      <h3>Neither side disappears.</h3>
+                      <p>
+                        Each component appears in separate result sets for both
+                        audiences. The planner protects the worse-served side
+                        first, then reduces imbalance.
+                      </p>
+                      <div className="balance-graphic">
+                        <div>
+                          <span>{input.audiences[0].name}</span>
+                          <strong>Σ {active?.balance[0]}</strong>
+                        </div>
+                        <div>
+                          <span>{input.audiences[1].name}</span>
+                          <strong>Σ {active?.balance[1]}</strong>
+                        </div>
+                      </div>
+                      <small>
+                        Lower sums mean earlier positions within each audience’s
+                        own Qloo request. These ranks are an algorithmic
+                        ordering tool, not calibrated confidence or comparable
+                        affinity scores.
+                      </small>
+                      <div className="constraint-recap">
+                        <strong>VERIFIED RULES</strong>
+                        <span>
+                          <Check size={15} /> Film ≤{" "}
+                          {input.constraints.maxMovieMinutes} minutes
+                        </span>
+                        <span>
+                          <Check size={15} /> Allowed ratings only
+                        </span>
+                        <span>
+                          <Check size={15} /> Rejected components excluded
+                        </span>
+                      </div>
+                      <button onClick={() => setView("evidence")}>
+                        Inspect the evidence <ArrowUpRight size={17} />
+                      </button>
+                    </aside>
+                  </div>
+                </>
+              )}
+            </>
+          )}
+        </section>
+      </main>
+      <footer>
+        <div className="footer-brand">
+          CROSSFADE<span>.</span>
+        </div>
+        <p>Turn cultural differences into experiences worth sharing.</p>
+        <div>
+          <span>
+            {input.mode === "synthetic"
+              ? "SYNTHETIC PREVIEW"
+              : "LIVE QLOO MODE"}
+          </span>
+          <a
+            href="https://github.com/HivMindAI/crossfade-ai"
+            target="_blank"
+            rel="noreferrer"
+          >
+            SOURCE CODE <ArrowUpRight size={14} />
+          </a>
+        </div>
+      </footer>
+    </div>
+  );
+}

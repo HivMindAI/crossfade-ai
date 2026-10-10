@@ -1,26 +1,47 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { ZodError } from "zod";
 import { AppError } from "@/lib/errors";
 import { requestSchema } from "@/lib/model";
 import { runNegotiation } from "@/lib/orchestrator";
 import { liveSource } from "@/lib/qloo";
-import { checkRateLimit } from "@/lib/rate-limit";
+import { checkRateLimit, checkRequestOrigin } from "@/lib/rate-limit";
 import { syntheticSource } from "@/lib/synthetic";
 
 export const runtime = "nodejs";
 
-export async function POST(request: NextRequest) {
+async function limitedBody(request: Request): Promise<string> {
+  const reader = request.body?.getReader();
+  if (!reader) return "";
+  const decoder = new TextDecoder();
+  let total = 0;
+  let body = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > 16_384) {
+      await reader.cancel();
+      throw new AppError("REQUEST_SIZE", "Request is too large.", 413);
+    }
+    body += decoder.decode(value, { stream: true });
+  }
+  return body + decoder.decode();
+}
+
+export async function POST(request: Request) {
   try {
-    checkRateLimit(
-      request.headers.get("x-real-ip") ??
-        request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
-        "anonymous",
-    );
+    checkRequestOrigin(request);
+    checkRateLimit("planning-global");
+    if (
+      !request.headers
+        .get("content-type")
+        ?.toLowerCase()
+        .startsWith("application/json")
+    )
+      throw new AppError("CONTENT_TYPE", "Send JSON to the planner.", 415);
     if (Number(request.headers.get("content-length")) > 16_384)
       throw new AppError("REQUEST_SIZE", "Request is too large.", 413);
-    const body = await request.text();
-    if (body.length > 16_384)
-      throw new AppError("REQUEST_SIZE", "Request is too large.", 413);
+    const body = await limitedBody(request);
     const parsed = requestSchema.parse(JSON.parse(body));
     const source = parsed.mode === "live" ? liveSource() : syntheticSource;
     const result = await runNegotiation(parsed, source);

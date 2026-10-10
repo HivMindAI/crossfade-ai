@@ -18,6 +18,7 @@ export const requestSchema = z.object({
   audiences: z.tuple([audienceSchema, audienceSchema]),
   constraints: z.object({
     maxMovieMinutes: z.number().int().min(45).max(300),
+    maxProgramMinutes: z.number().int().min(90).max(420).optional(),
     allowedRatings: z
       .array(z.enum(["G", "PG", "PG-13", "R", "NC-17"]))
       .min(1)
@@ -35,12 +36,18 @@ export type Entity = {
   duration?: number;
   contentRating?: string;
   explainability?: "available" | "unavailable";
+  influence?: InfluenceSignal[];
+  evidenceWarning?: string;
 };
+export type InfluenceSignal = { signalId: string; normalizedInfluence: number };
 export type SearchMatch = Pick<Entity, "id" | "name" | "domain">;
+export type InsightOptions = { take: number; page: number };
 export type EvidenceSet = {
   entities: Entity[];
   signalIds: string[];
   source: "synthetic" | "qloo";
+  page?: number;
+  take?: number;
 };
 export type CulturalSource = {
   search(name: string, domain: Domain): Promise<SearchMatch[]>;
@@ -48,7 +55,9 @@ export type CulturalSource = {
     domain: Domain,
     signalIds: string[],
     excludedIds: string[],
+    options?: InsightOptions,
   ): Promise<EvidenceSet>;
+  metrics?(): { httpAttempts: number };
 };
 export type Action = {
   step: "PLAN" | "SELECT TOOLS" | "EXECUTE" | "EVALUATE" | "VERIFY" | "REPLAN";
@@ -59,6 +68,7 @@ export type Candidate = {
   ranks: [number, number];
   signals: [string[], string[]];
   source: "synthetic" | "qloo";
+  influences: [InfluenceSignal[], InfluenceSignal[]];
   explanation: string;
 };
 export type Blueprint = {
@@ -66,6 +76,8 @@ export type Blueprint = {
   title: string;
   candidates: Candidate[];
   balance: [number, number];
+  path: "fairness" | "audience-a" | "audience-b";
+  programMinutes: number;
   rationale: string;
 };
 export type PlanResult = {
@@ -74,5 +86,13 @@ export type PlanResult = {
   options: Blueprint[];
   resolved: [SearchMatch[], SearchMatch[]];
   audit: Action[];
+  gaps: string[];
+  alternativesNote: string;
+  metrics: {
+    sourceCalls: number;
+    recoveryCalls: number;
+    elapsedMs: number;
+    httpAttempts?: number;
+  };
   warning?: string;
 };

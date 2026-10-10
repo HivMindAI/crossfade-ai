@@ -117,10 +117,15 @@ export const syntheticSource: CulturalSource = {
         seed.name.toLocaleLowerCase() === name.toLocaleLowerCase(),
     );
   },
-  async insights(domain, signalIds, excludedIds): Promise<EvidenceSet> {
+  async insights(
+    domain,
+    signalIds,
+    excludedIds,
+    options = { take: 20, page: 1 },
+  ): Promise<EvidenceSet> {
     const ranks = signalIds.map((id) => seedRanks[id]?.[domain]);
     if (ranks.some((rank) => !rank))
-      return { entities: [], signalIds, source: "synthetic" };
+      return { entities: [], signalIds, source: "synthetic", ...options };
     const entities = candidates[domain]
       .map((entity, index) => ({
         entity,
@@ -133,7 +138,8 @@ export const syntheticSource: CulturalSource = {
       .sort(
         (a, b) => a.order - b.order || a.entity.id.localeCompare(b.entity.id),
       )
-      .map(({ entity }) => entity);
-    return { entities, signalIds, source: "synthetic" };
+      .map(({ entity }) => entity)
+      .slice((options.page - 1) * options.take, options.page * options.take);
+    return { entities, signalIds, source: "synthetic", ...options };
   },
 };

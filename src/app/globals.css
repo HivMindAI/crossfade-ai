@@ -673,6 +673,7 @@ select:focus-visible {
   gap: 40px;
   align-items: center;
   flex: 1;
+  flex-wrap: wrap;
 }
 .constraint-controls > label {
   display: grid;
@@ -883,9 +884,30 @@ select:focus-visible {
 .no-solution .button {
   margin-top: 13px;
 }
+.no-solution ul,
+.no-solution ol {
+  max-width: 720px;
+  padding-left: 22px;
+  color: #596c5e;
+  font-size: 12px;
+  line-height: 1.7;
+}
+.no-solution details {
+  margin: 20px 0;
+  font-size: 12px;
+}
+.no-solution summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+.alternatives-note {
+  color: #607567;
+  font-size: 12px;
+  margin: 0 0 12px;
+}
 .option-picker {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 9px;
   margin-bottom: 18px;
 }
@@ -942,6 +964,10 @@ select:focus-visible {
   font-size: 12px;
   max-width: 575px;
   margin: 0;
+}
+.plan-head .program-note {
+  margin-top: 10px;
+  color: #4f7359;
 }
 .plan-badge {
   font-size: 9px;
@@ -1171,6 +1197,14 @@ select:focus-visible {
   font-size: 12px;
   line-height: 1.65;
   color: #647269;
+}
+.evidence-label {
+  display: block;
+  margin-top: 14px;
+  color: #42634d;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 .rank-pair {
   display: flex;

@@ -45,6 +45,7 @@ const defaults: PlanRequest = {
   ],
   constraints: {
     maxMovieMinutes: 120,
+    maxProgramMinutes: 180,
     allowedRatings: ["G", "PG", "PG-13"],
     excludedIds: [],
   },
@@ -120,7 +121,12 @@ export function Workspace() {
       setResult(body as PlanResult);
       setSelected(0);
       setView("blueprint");
-      if (previous && body.options?.[0]) {
+      if (body.status === "no-solution") {
+        setReplacements([]);
+        setNotice(
+          "The plan is incomplete. Review the evidence gaps and decision trace.",
+        );
+      } else if (previous && body.options?.[0]) {
         const changes = previous.candidates.flatMap((candidate, index) =>
           candidate.entity.id !== body.options[0].candidates[index].entity.id
             ? [
@@ -575,6 +581,26 @@ export function Workspace() {
                   }
                 />
               </label>
+              <label>
+                Maximum total program{" "}
+                <span>{input.constraints.maxProgramMinutes ?? 180} min</span>
+                <input
+                  type="range"
+                  min="120"
+                  max="300"
+                  step="5"
+                  value={input.constraints.maxProgramMinutes ?? 180}
+                  onChange={(event) =>
+                    setInput((current) => ({
+                      ...current,
+                      constraints: {
+                        ...current.constraints,
+                        maxProgramMinutes: Number(event.target.value),
+                      },
+                    }))
+                  }
+                />
+              </label>
               <fieldset>
                 <legend>Allowed film ratings</legend>
                 <div className="rating-list">
@@ -723,16 +749,32 @@ export function Workspace() {
                 <div className="no-solution">
                   <h3>No honest bridge under these rules.</h3>
                   <p>
-                    At least one experience component lacks shared evidence or
-                    fails a hard constraint. Loosen the film rule, clear a
-                    rejection, or change interests, then repair the plan.
+                    A required component lacks shared, verifiable evidence.
+                    Review the specific gaps before revising an input. Hard
+                    constraints were not relaxed.
                   </p>
+                  <ul>
+                    {result.gaps.map((gap) => (
+                      <li key={gap}>{gap}</li>
+                    ))}
+                  </ul>
+                  <details>
+                    <summary>Decision and recovery record</summary>
+                    <ol>
+                      {result.audit.map((action, index) => (
+                        <li key={index}>
+                          <strong>{action.step}:</strong> {action.detail}
+                        </li>
+                      ))}
+                    </ol>
+                  </details>
                   <a href="#studio" className="button button-primary">
                     Adjust the inputs <ArrowUpRight size={18} />
                   </a>
                 </div>
               ) : (
                 <>
+                  <p className="alternatives-note">{result.alternativesNote}</p>
                   <div
                     className="option-picker"
                     role="tablist"
@@ -751,7 +793,11 @@ export function Workspace() {
                       >
                         PATH 0{index + 1}
                         <span>
-                          {index === 0 ? "Most balanced" : "Alternative"}
+                          {option.path === "fairness"
+                            ? "Fairness first"
+                            : option.path === "audience-a"
+                              ? `Favors ${input.audiences[0].name}`
+                              : `Favors ${input.audiences[1].name}`}
                         </span>
                         <ArrowRight size={17} />
                       </button>
@@ -766,6 +812,14 @@ export function Workspace() {
                           </span>
                           <h3>{active?.title}</h3>
                           <p>{active?.rationale}</p>
+                          <p className="program-note">
+                            Conceptual program: 20 min listening +{" "}
+                            {active?.candidates[1].entity.duration} min film +
+                            10 min transition + 15 min discussion ={" "}
+                            {active?.programMinutes} min. Screening rights,
+                            availability, ticketing, and venue remain
+                            unverified.
+                          </p>
                         </div>
                         <span className="plan-badge">3 ACTS</span>
                       </div>
@@ -865,6 +919,14 @@ export function Workspace() {
                                 </span>
                               </div>
                               <p>{candidate.explanation}</p>
+                              <strong className="evidence-label">
+                                Qloo-returned evidence
+                              </strong>
+                              <p>
+                                {result.mode === "synthetic"
+                                  ? "Invented development fixture. No Qloo evidence is claimed."
+                                  : "This entity appeared in both audience-specific Qloo result sets by the same ID."}
+                              </p>
                               <div className="rank-pair">
                                 <span>
                                   {input.audiences[0].name}:{" "}
@@ -875,13 +937,68 @@ export function Workspace() {
                                   <b>#{candidate.ranks[1]}</b>
                                 </span>
                               </div>
+                              <strong className="evidence-label">
+                                Algorithmic score
+                              </strong>
+                              <p>
+                                Ordinal rank positions only. The planner adds
+                                them across three acts to compare trade-offs;
+                                they are not satisfaction probabilities.
+                              </p>
+                              {result.mode === "live" && (
+                                <>
+                                  <strong className="evidence-label">
+                                    Reported influence signals
+                                  </strong>
+                                  {[0, 1].map((side) => (
+                                    <p key={side}>
+                                      {input.audiences[side].name}:{" "}
+                                      {candidate.influences[side].length
+                                        ? candidate.influences[side]
+                                            .map((signal) => {
+                                              const name =
+                                                result.resolved[side].find(
+                                                  (match) =>
+                                                    match.id ===
+                                                    signal.signalId,
+                                                )?.name ?? "input entity";
+                                              return `${name} ${signal.normalizedInfluence.toFixed(2)}`;
+                                            })
+                                            .join(", ")
+                                        : "No recognized per-result signal/value pairs."}
+                                    </p>
+                                  ))}
+                                  <small>
+                                    Values are normalized within a Qloo request.
+                                    They are not probabilities, causal proof, or
+                                    comparable across unrelated requests.
+                                  </small>
+                                </>
+                              )}
+                              <strong className="evidence-label">
+                                Hard constraints and missing evidence
+                              </strong>
+                              <p>
+                                {candidate.entity.domain === "movie"
+                                  ? `Film metadata passed the ${input.constraints.maxMovieMinutes}-minute film limit, ${input.constraints.maxProgramMinutes ?? 180}-minute total program limit, and allowed rating set.`
+                                  : "This component passed explicit rejection checks."}{" "}
+                                Rights and availability remain unverified.
+                              </p>
+                              <strong className="evidence-label">
+                                Creative interpretation
+                              </strong>
+                              <p>
+                                The three-act framing is a proposed experience,
+                                not a Qloo claim.
+                              </p>
                               <small>
                                 {result.mode === "synthetic"
                                   ? "These invented fixtures contain no Qloo explainability metadata."
-                                  : candidate.entity.explainability ===
-                                      "available"
-                                    ? "Qloo supplied explainability metadata; the interface does not treat it as causal proof. Raw datasets and credentials are omitted."
-                                    : "Per-result explainability unavailable. Raw datasets and credentials are omitted."}
+                                  : (candidate.entity.evidenceWarning ??
+                                    (candidate.entity.explainability ===
+                                    "available"
+                                      ? "Qloo returned an explainability object. Only recognized input ID/value pairs are shown above."
+                                      : "Per-result explainability unavailable."))}
                               </small>
                             </div>
                           ))}
@@ -921,12 +1038,12 @@ export function Workspace() {
                       </div>
                       <small>
                         Lower sums mean earlier positions within each audience’s
-                        own Qloo request. These ranks are an algorithmic
-                        ordering tool, not calibrated confidence or comparable
-                        affinity scores.
+                        own result set. These ranks are an algorithmic ordering
+                        tool, not calibrated confidence or comparable affinity
+                        scores.
                       </small>
                       <div className="constraint-recap">
-                        <strong>VERIFIED RULES</strong>
+                        <strong>CHECKED RULES</strong>
                         <span>
                           <Check size={15} /> Film ≤{" "}
                           {input.constraints.maxMovieMinutes} minutes
@@ -935,9 +1052,18 @@ export function Workspace() {
                           <Check size={15} /> Allowed ratings only
                         </span>
                         <span>
+                          <Check size={15} /> Proposed program ≤{" "}
+                          {input.constraints.maxProgramMinutes ?? 180} minutes
+                        </span>
+                        <span>
                           <Check size={15} /> Rejected components excluded
                         </span>
                       </div>
+                      <small>
+                        Timing uses a proposed 45-minute non-film agenda.
+                        Screening permission, availability, ticketing, and venue
+                        are not verified.
+                      </small>
                       <button onClick={() => setView("evidence")}>
                         Inspect the evidence <ArrowUpRight size={17} />
                       </button>

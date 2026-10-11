@@ -68,6 +68,38 @@ describe("negotiation", () => {
     expect(repaired.audit.some((step) => step.step === "REPLAN")).toBe(true);
   });
 
+  it("returns a conceptual live path when Qloo film runtime is not established", async () => {
+    const source: CulturalSource = {
+      ...syntheticSource,
+      async insights(domain, signalIds, excludedIds, options) {
+        const set = await syntheticSource.insights(
+          domain,
+          signalIds,
+          excludedIds,
+          options,
+        );
+        return {
+          ...set,
+          source: "qloo" as const,
+          entities: set.entities.map((entity) =>
+            domain === "movie" ? { ...entity, duration: undefined } : entity,
+          ),
+        };
+      },
+    };
+    const request = clone();
+    request.mode = "live";
+    const result = await runNegotiation(request, source);
+    expect(result.status).toBe("conceptual");
+    expect(result.options.length).toBeGreaterThan(0);
+    expect(
+      result.options.every((option) => option.programMinutes === null),
+    ).toBe(true);
+    expect(result.gaps).toContainEqual(expect.stringContaining("runtime"));
+    expect(result.audit.at(-1)?.detail).toContain("No hard rule was waived");
+    expect(result.metrics.recoveryCalls).toBe(0);
+  });
+
   it("returns no solution for impossible constraints", async () => {
     const next = clone();
     next.constraints.maxMovieMinutes = 60;
@@ -104,7 +136,7 @@ describe("negotiation", () => {
     expect(negotiate(matrix, clone())).toEqual([]);
   });
 
-  it("does not accept missing film metadata for a hard constraint", () => {
+  it("marks missing film metadata as conceptual instead of certifying hard constraints", () => {
     const matrix = Object.fromEntries(
       (["artist", "movie", "book"] as Domain[]).map((domain) => [
         domain,
@@ -115,7 +147,48 @@ describe("negotiation", () => {
         })),
       ]),
     ) as EvidenceMatrix;
-    expect(buildCandidates(matrix, clone()).movie).toEqual([]);
+    expect(buildCandidates(matrix, clone()).movie).toHaveLength(1);
+    expect(negotiate(matrix, clone())[0]).toMatchObject({
+      scheduleStatus: "conceptual",
+      programMinutes: null,
+      unverified: ["runtime", "content rating"],
+    });
+  });
+
+  it("prefers duration-verified paths and never relaxes a known rating rule", () => {
+    const data = Object.fromEntries(
+      (["artist", "movie", "book"] as Domain[]).map((domain) => [
+        domain,
+        [0, 1].map(() => ({
+          source: "synthetic",
+          signalIds: ["seed"],
+          entities:
+            domain === "movie"
+              ? [
+                  { id: "unknown", name: "Unknown", domain },
+                  {
+                    id: "verified",
+                    name: "Verified",
+                    domain,
+                    duration: 90,
+                    contentRating: "PG",
+                  },
+                ]
+              : [{ id: domain, name: domain, domain }],
+        })),
+      ]),
+    ) as EvidenceMatrix;
+    expect(negotiate(data, clone())[0]).toMatchObject({
+      scheduleStatus: "duration-verified",
+    });
+    data.movie[0].entities[1].contentRating = "R";
+    data.movie[1].entities[1].contentRating = "R";
+    expect(negotiate(data, clone())[0]).toMatchObject({
+      scheduleStatus: "conceptual",
+    });
+    expect(
+      buildCandidates(data, clone()).movie.map((item) => item.entity.id),
+    ).toEqual(["unknown"]);
   });
 
   it("forces ambiguous entity selection", async () => {

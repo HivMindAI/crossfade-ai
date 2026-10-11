@@ -1,19 +1,53 @@
 // Live-only, redacted contract check. Never logs keys, names, IDs, or payloads.
+if (process.argv.slice(2).join(" ") !== "--live-once") {
+  console.log(
+    "Offline only. Add --live-once for the bounded, authenticated three-request check.",
+  );
+  process.exit(0);
+}
 const key = process.env.QLOO_API_KEY?.trim();
 if (!key) {
   console.error("QLOO_API_KEY is required. No request sent.");
   process.exit(2);
 }
 
-const origin = "https://hackathon.api.qloo.com";
+const approvedOrigins = new Set([
+  "https://hackathon.api.qloo.com",
+  "https://api.qloo.com",
+]);
+let origin;
+try {
+  const configured = new URL(
+    process.env.QLOO_API_ORIGIN?.trim() || "https://hackathon.api.qloo.com",
+  );
+  if (
+    !approvedOrigins.has(configured.origin) ||
+    configured.pathname !== "/" ||
+    configured.search ||
+    configured.hash ||
+    configured.username ||
+    configured.password
+  )
+    throw new Error("unapproved host");
+  origin = configured.origin;
+} catch {
+  console.error("QLOO_API_ORIGIN must be an approved Qloo HTTPS host.");
+  process.exit(2);
+}
+let attempts = 0;
 async function call(path, params) {
+  if (attempts >= 3) throw new Error("smoke-check request limit reached");
   const url = new URL(path, origin);
   url.search = new URLSearchParams(params).toString();
+  attempts++;
   const response = await fetch(url, {
     headers: { "X-Api-Key": key, Accept: "application/json" },
     signal: AbortSignal.timeout(8000),
     cache: "no-store",
+    redirect: "manual",
   });
+  if (response.status >= 300 && response.status < 400)
+    throw new Error(`${path} returned a redirect; no request was followed`);
   if (response.status === 401 || response.status === 403)
     throw new Error("authentication rejected by Qloo");
   if (!response.ok) throw new Error(`${path} returned HTTP ${response.status}`);

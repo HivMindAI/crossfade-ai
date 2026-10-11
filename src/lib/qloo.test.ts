@@ -8,12 +8,74 @@ const transport = (
 ) => vi.fn(handler) as unknown as typeof fetch;
 
 describe("Qloo client", () => {
+  it("accepts only the two Qloo API hosts before sending a key", async () => {
+    const calls: URL[] = [];
+    const fetcher = transport(async (url) => {
+      calls.push(url);
+      return envelope();
+    });
+    const client = new QlooClient(
+      "key",
+      fetcher,
+      24,
+      8000,
+      async () => {},
+      "https://api.qloo.com",
+    );
+    await client.search("Miles Davis", "artist");
+    expect(calls[0].origin).toBe("https://api.qloo.com");
+    for (const origin of [
+      "http://api.qloo.com",
+      "https://api.qloo.com.example.invalid",
+      "https://api.qloo.com/collect",
+      "https://user:password@api.qloo.com",
+    ]) {
+      expect(
+        () => new QlooClient("key", fetcher, 24, 8000, undefined, origin),
+      ).toThrow("not approved");
+    }
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["artist", "movie", "book"] as const)(
+    "uses documented Search and Insights types for %s",
+    async (domain) => {
+      const calls: URL[] = [];
+      const client = new QlooClient(
+        "key",
+        transport(async (url) => {
+          calls.push(url as URL);
+          return envelope();
+        }),
+      );
+      await client.search("A & B", domain);
+      await client.insights(domain, ["seed-A", "seed-B"], ["rejected"], {
+        take: 20,
+        page: 2,
+      });
+      expect(calls[0].searchParams.get("query")).toBe("A & B");
+      expect(calls[0].searchParams.get("types")).toBe(`urn:entity:${domain}`);
+      expect(calls[0].searchParams.get("take")).toBe("8");
+      expect(calls[1].searchParams.get("filter.type")).toBe(
+        `urn:entity:${domain}`,
+      );
+      expect(calls[1].searchParams.get("signal.interests.entities")).toBe(
+        "seed-A,seed-B",
+      );
+      expect(calls[1].searchParams.get("filter.exclude.entities")).toBe(
+        "rejected",
+      );
+      expect(calls[1].searchParams.get("page")).toBe("2");
+      expect(calls[1].searchParams.get("take")).toBe("20");
+    },
+  );
   it("constructs documented search and insights parameters and protects the key", async () => {
     const calls: URL[] = [];
     const client = new QlooClient(
       "secret",
       transport(async (url, init) => {
         calls.push(url as URL);
+        expect(init.redirect).toBe("manual");
         expect((init.headers as Record<string, string>)["X-Api-Key"]).toBe(
           "secret",
         );
@@ -49,11 +111,46 @@ describe("Qloo client", () => {
     expect(await client.search("unknown", "book")).toEqual([]);
     expect((await client.insights("book", ["seed"], [])).entities).toEqual([]);
   });
+  it("deduplicates repeated Search IDs without inventing a second disambiguation choice", async () => {
+    const client = new QlooClient(
+      "key",
+      transport(async () =>
+        envelope([
+          {
+            entity_id: "artist-1",
+            name: "Miles Davis",
+            type: "urn:entity:artist",
+          },
+          {
+            entity_id: "artist-1",
+            name: "Miles Davis",
+            type: "urn:entity:artist",
+          },
+        ]),
+      ),
+    );
+    expect(await client.search("Miles Davis", "artist")).toEqual([
+      { id: "artist-1", name: "Miles Davis", domain: "artist" },
+    ]);
+  });
   it("handles unauthorized requests without retrying", async () => {
     const fetcher = transport(async () => new Response("", { status: 401 }));
     await expect(
       new QlooClient("key", fetcher).search("x", "book"),
     ).rejects.toMatchObject({ code: "QLOO_AUTH" });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+  it("never follows a redirect with the server-side key", async () => {
+    const fetcher = transport(async (_url, init) => {
+      expect(init.redirect).toBe("manual");
+      return new Response(null, {
+        status: 302,
+        headers: { Location: "https://example.invalid/collect" },
+      });
+    });
+    await expect(
+      new QlooClient("secret", fetcher).search("Miles Davis", "artist"),
+    ).rejects.toMatchObject({ code: "QLOO_REDIRECT" });
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
   it("retries rate limiting in a bounded way", async () => {
@@ -71,6 +168,61 @@ describe("Qloo client", () => {
     await expect(client.search("x", "book")).rejects.toMatchObject({
       code: "QLOO_MALFORMED",
     });
+  });
+  it("rejects invalid paging and malformed or empty Insights envelopes", async () => {
+    const fetcher = transport(async () =>
+      Response.json({ results: { entities: [] } }),
+    );
+    const client = new QlooClient("key", fetcher);
+    await expect(
+      client.insights("movie", ["seed"], [], { take: 2.5, page: 1 }),
+    ).rejects.toMatchObject({ code: "INVALID_QUERY" });
+    expect(fetcher).toHaveBeenCalledTimes(0);
+    expect((await client.insights("movie", ["seed"], [])).entities).toEqual([]);
+  });
+  it("enforces the response-size cap without returning upstream content", async () => {
+    const fetcher = transport(
+      async () =>
+        new Response("oversized-secret", {
+          status: 200,
+          headers: { "content-length": "2000001" },
+        }),
+    );
+    await expect(
+      new QlooClient("key", fetcher).search("x", "book"),
+    ).rejects.toMatchObject({ code: "QLOO_RESPONSE_SIZE" });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    const undeclared = transport(
+      async () => new Response("x".repeat(2_000_001)),
+    );
+    await expect(
+      new QlooClient("key", undeclared).search("x", "book"),
+    ).rejects.toMatchObject({ code: "QLOO_RESPONSE_SIZE" });
+    expect(undeclared).toHaveBeenCalledTimes(1);
+  });
+  it("does not disclose provider error bodies and never retries client errors", async () => {
+    const fetcher = transport(
+      async () => new Response("upstream-secret", { status: 400 }),
+    );
+    const failure = new QlooClient("key", fetcher).search("x", "book");
+    await expect(failure).rejects.toMatchObject({ code: "QLOO_REQUEST" });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+  it("does not dispatch empty Insights signals and keeps provenance", async () => {
+    const fetcher = transport(async () => envelope());
+    const result = await new QlooClient("key", fetcher).insights(
+      "artist",
+      [],
+      [],
+    );
+    expect(result).toEqual({
+      entities: [],
+      signalIds: [],
+      source: "qloo",
+      take: 20,
+      page: 1,
+    });
+    expect(fetcher).not.toHaveBeenCalled();
   });
   it("handles timeouts", async () => {
     vi.useFakeTimers();

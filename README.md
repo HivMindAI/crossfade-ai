@@ -2,9 +2,9 @@
 
 **Turn cultural differences into experiences worth sharing.** CROSSFADE is an agentic cultural negotiation prototype for the [Qloo Agentic Hackathon](https://qloo.devpost.com/). It builds a three-act cultural program for two audiences, using separate taste queries, shared entity IDs, explicit constraints, and visible decision traces.
 
-> **Current status:** The local end-to-end journey works with **SYNTHETIC / NOT REAL QLOO DATA**. `QLOO_API_KEY` was unavailable during implementation. The live client is built against documented endpoints but has **not** completed an authenticated round trip. No public demo has been deployed or submitted.
+> **Current status:** The local end-to-end journey works with **SYNTHETIC / NOT REAL QLOO DATA**. No `QLOO_API_KEY` is available in this runtime, so Search and Insights have **not** completed an authenticated round trip. Live film suggestions can be conceptual when Qloo does not provide verified runtime minutes; they are not schedules. No public demo has been deployed or submitted.
 
-The implementation is published for review in [PR #1](https://github.com/HivMindAI/crossfade-ai/pull/1) on `feature/crossfade-mvp`. The [GitHub Actions CI run](https://github.com/HivMindAI/crossfade-ai/actions/runs/38065856447) passed for the initial MVP. Milestone 2 changes remain on that feature branch until review; `main` has not been merged.
+The implementation is under review in [PR #1](https://github.com/HivMindAI/crossfade-ai/pull/1) on `feature/crossfade-mvp`; `main` has not been merged. Earlier [MVP CI](https://github.com/HivMindAI/crossfade-ai/actions/runs/38065856447) and [Milestone 2 CI](https://github.com/HivMindAI/crossfade-ai/actions/runs/38070292125) passed. Milestone 3 verification is recorded in [the validation log](docs/VALIDATION.md).
 
 ## Run locally
 
@@ -17,7 +17,7 @@ npm run dev
 
 Open <http://localhost:3000>. The default **Synthetic demo** mode needs no credentials. Choose a preset, select **Find the shared ground**, inspect up to three evidence-supported paths, reject a component, or change film and total-program rules and select **Repair the experience**.
 
-To try live Qloo after receiving a hackathon key, create `.env.local` from `.env.example` and set `QLOO_API_KEY`. Select **Live Qloo** in the UI. The key remains server-side. The server never falls back to fixtures if a live request fails.
+To try live Qloo **after** the separate integration and abuse-control gates, create `.env.local` from `.env.example`, set `QLOO_API_KEY` privately, match `QLOO_API_ORIGIN` to the key issuer's instructions, and set `QLOO_LIVE_ENABLED=1` as an explicit server-side launch switch. Only the hackathon and standard Qloo HTTPS origins are accepted. Select **Live Qloo** in the UI. The key remains server-side. Without both the key and launch switch the planner fails closed; it never falls back to fixtures. The bounded smoke script is a separate, explicit validation step and does not activate the app's live mode.
 
 ## Verification
 
@@ -33,25 +33,25 @@ npm run test:e2e
 
 On a local machine with Chrome already installed, Playwright uses that installation. In CI it installs its own Chromium build.
 
-The live smoke check needs an actual key in the process environment:
+The live smoke check needs an actual key in the process environment and an explicit opt-in:
 
 ```bash
-QLOO_API_KEY=your-key npm run qloo:smoke
+npm run qloo:smoke -- --live-once
 ```
 
-On PowerShell, set `$env:QLOO_API_KEY` for the current process before running the command. The smoke script reports authentication, response shape, nonempty Search and movie/book Insights results, and explainability availability separately. It never prints the key, names, IDs, or response body. Without a key it exits before any request.
+Set `QLOO_API_KEY` in the local process environment or deployment secret manager before running that command; never place the value in a command, file, chat, or CI log. The script makes at most three sequential GETs (Search, movie Insights, book Insights), with no redirects or retries. It reports only counts and structure. Without `--live-once`, it performs no request. Without a key, it stops before dispatch. See the [Qloo validation procedure](docs/QLOO.md) for the remaining live checks.
 
 ## How it works
 
 1. **Resolve:** `/api/plan` validates inputs, resolves each named interest through Qloo Search, and asks the user to disambiguate multiple matches. A selected ID is checked against a fresh search result.
 2. **Gather:** The orchestrator requests artist, movie, and book Insights separately for each audience, with at most three concurrent calls. When a full result page leaves a required domain without an eligible shared candidate, it conditionally requests page two for only the full side(s). Every recovery decision is recorded.
 3. **Negotiate:** Candidates must appear by the same entity ID in both result sets. The algorithm compares within-request rank totals, removes dominated plans, and selects a fairness-first plan plus genuinely A- and B-favoring trade-offs when they exist. It shows fewer paths otherwise.
-4. **Check rules:** Film length, total proposed program time, allowed ratings, and explicit rejections are hard gates. The conceptual agenda reserves 20 minutes for listening, 10 for transition, and 15 for discussion. Missing or conflicting movie metadata yields `no-solution` with a specific gap; no rule is silently weakened.
+4. **Check rules:** Known violations of film length, total program time, rating, or explicit rejections are excluded. A plan is **duration-verified** only when its film runtime and rating are known and pass those limits. Missing runtime/rating yields a clearly marked **conceptual** option, with no certified schedule or total time. Conflicting metadata or known violations can still produce `no-solution`. The proposed non-film agenda is 45 minutes; no rule is silently weakened.
 5. **Repair:** Rejection or a changed rule triggers a new run. Qloo exclusions are sent upstream and checked again locally. The interface shows changed components, missing evidence, and a redacted PLAN → SELECT TOOLS → EXECUTE → EVALUATE → VERIFY / REPLAN trace.
 
 Rank sums are an **algorithmic ordering device**, not confidence, probabilities, or comparable affinity values from different Qloo requests. Qloo-returned evidence, recognized per-result influence signals, constraints, missing evidence, and creative framing are shown separately. The sequence and experience framing are creative interpretations. No LLM is used; the tool-using orchestration and negotiation are deterministic, bounded code.
 
-The public Qloo reference does not specify a movie runtime field with a guaranteed unit. The live client therefore does not treat a numeric `properties.duration` as verified minutes. A real live plan may remain incomplete until an official key allows response inspection and runtime metadata can be validated. A conceptually timed plan does not verify screening rights, film availability, ticketing, or a venue.
+The public Qloo reference does not specify a movie runtime field with a guaranteed unit. The live client therefore does not treat a numeric `properties.duration` as verified minutes. A live conceptual path requires independent runtime and rating verification before scheduling, plus separate screening-rights, availability, ticketing, and venue checks.
 
 ## Project map
 
@@ -71,14 +71,14 @@ More details: [architecture](docs/ARCHITECTURE.md), [Qloo contract](docs/QLOO.md
 
 ## Security and reliability
 
-- The key is read only on the server and sent in `X-Api-Key`. `.env*` is ignored except `.env.example`.
+- The key is read only on the server and sent in `X-Api-Key`. `.env*` is ignored except `.env.example`. Live planning is disabled by default even if a key exists; `QLOO_LIVE_ENABLED=1` is required after release review.
 - The API streams and caps request bodies at 16 KiB, checks same-origin browser requests, ignores untrusted forwarding headers, limits each run to 16 logical source calls, and applies a per-process global rate window. This is a zero-cost abuse brake, not a distributed production rate limit.
-- Qloo allows at most 24 actual HTTP attempts per plan, including retries. Calls time out after 8 seconds, retry short 429/5xx/network failures at most twice, honor a bounded `Retry-After`, and return specific safe errors for authentication, rate limits, invalid JSON, malformed responses, and empty results.
+- The client caps itself at 24 actual Qloo HTTP attempts per plan, including retries (this is an application cap, not a Qloo quota). Calls time out after 8 seconds, never follow redirects with the key, retry short 429/5xx/network failures at most twice, honor bounded `Retry-After`, and return safe errors for authentication, rate limits, invalid JSON, and malformed responses.
 - The UI receives selected entity IDs, names, ranks, and redacted execution notes, not full Qloo payloads or credentials.
 - Synthetic mode is labeled throughout the interface and never claims Qloo provenance.
 
 ## Deployment and submission gate
 
-`vercel.json` configures the Next.js framework; deployment can use a free plan if available to the account owner. A deployment must set `QLOO_API_KEY` as a server-side environment variable. Do not enter an external hackathon submission until the public app has been tested end to end with a real key. The [hackathon rules](https://qloo.devpost.com/rules) require a public repository and a free, functional externally hosted demo. Account-owner actions still needed: obtain the Qloo key, provide deployment access, validate a live public run, and submit on Devpost.
+`vercel.json` configures the Next.js framework; use an available free tier only after its limits have been checked by the account owner. Configure `QLOO_API_KEY` only as a server-side deployment secret. The current per-process rate window is **not** sufficient for a public multi-instance demo; add a provider-level rate rule or a shared limiter before release, and check Qloo request limits with the account owner. Do not submit until an authenticated Qloo run and a public end-to-end test pass separately. Deployment has **not** been authorized. See [deployment gates](docs/DEPLOYMENT.md) and the [submission checklist](docs/SUBMISSION.md).
 
 The existing [MIT license](LICENSE) is preserved.

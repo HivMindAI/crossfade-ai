@@ -127,13 +127,18 @@ describe("conditional planning and negotiation hardening", () => {
     ).toBe(true);
   });
 
-  it("rejects conflicting or missing film metadata and a total-program overrun", () => {
+  it("rejects conflicting film metadata and a known total-program overrun", () => {
     const data = matrix();
     data.movie[1].entities[0].duration = 105;
     expect(buildCandidates(data, base()).movie).toEqual([]);
     data.movie[1].entities[0].duration = undefined;
     data.movie[0].entities[0].duration = undefined;
-    expect(buildCandidates(data, base()).movie).toEqual([]);
+    expect(buildCandidates(data, base()).movie).toHaveLength(1);
+    expect(negotiate(data, base())[0]).toMatchObject({
+      scheduleStatus: "conceptual",
+      programMinutes: null,
+      unverified: ["runtime"],
+    });
     data.movie[0].entities[0].duration = 100;
     const request = base();
     request.constraints.maxProgramMinutes = 140;
@@ -159,9 +164,12 @@ describe("conditional planning and negotiation hardening", () => {
     expect(new Set(result.options.map((option) => option.id)).size).toBe(
       result.options.length,
     );
-    expect(result.options.every((option) => option.programMinutes <= 180)).toBe(
-      true,
-    );
+    expect(
+      result.options.every(
+        (option) =>
+          option.programMinutes !== null && option.programMinutes <= 180,
+      ),
+    ).toBe(true);
   });
 
   it("shows fewer paths when the Pareto frontier offers no meaningful trade-off", () => {

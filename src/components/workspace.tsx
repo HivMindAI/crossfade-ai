@@ -99,9 +99,29 @@ export function Workspace() {
     matches: { id: string; name: string; domain: Domain }[];
   } | null>(null);
   const resultsRef = useRef<HTMLElement>(null);
+  const inputVersion = useRef(0);
+  const requestController = useRef<AbortController | null>(null);
+
+  function markDirty() {
+    inputVersion.current++;
+    requestController.current?.abort();
+    requestController.current = null;
+    setBusy(false);
+    setResult(null);
+    setError(null);
+    setDisambiguation(null);
+    setNotice(null);
+    setReplacements([]);
+  }
 
   async function generate(next: PlanRequest, previous?: Blueprint) {
+    const version = inputVersion.current;
+    requestController.current?.abort();
+    const controller = new AbortController();
+    requestController.current = controller;
     setBusy(true);
+    setResult(null);
+    setReplacements([]);
     setError(null);
     setNotice(null);
     setDisambiguation(null);
@@ -110,8 +130,10 @@ export function Workspace() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(next),
+        signal: controller.signal,
       });
       const body = await response.json();
+      if (controller.signal.aborted || version !== inputVersion.current) return;
       if (!response.ok) {
         if (body.error === "AMBIGUOUS_ENTITY" && body.details?.matches?.length)
           setDisambiguation(body.details);
@@ -137,27 +159,34 @@ export function Workspace() {
         setReplacements(changes);
         setNotice(
           changes.length
-            ? "The plan was repaired. Review what changed below."
-            : "The plan still satisfies the updated rules.",
+            ? `The plan was repaired after your rejection. ${changes.length} component${changes.length === 1 ? "" : "s"} changed; compare the replacements below.`
+            : "The same components remain after reevaluation; review the decision trace.",
         );
       } else {
         setReplacements([]);
-        setNotice("Evidence gathered and alternatives evaluated.");
+        setNotice(
+          body.status === "conceptual"
+            ? "Shared evidence found. Film scheduling checks are still pending."
+            : "Evidence gathered and alternatives evaluated.",
+        );
       }
-      setTimeout(
-        () =>
+      setTimeout(() => {
+        if (version === inputVersion.current)
           resultsRef.current?.scrollIntoView({
             behavior: "smooth",
             block: "start",
-          }),
-        100,
-      );
+          });
+      }, 100);
     } catch {
+      if (controller.signal.aborted || version !== inputVersion.current) return;
       setError(
         "Could not reach the planner. Check your connection and try again.",
       );
     } finally {
-      setBusy(false);
+      if (requestController.current === controller) {
+        requestController.current = null;
+        setBusy(false);
+      }
     }
   }
 
@@ -166,6 +195,7 @@ export function Workspace() {
     field: "name" | "interests",
     value: string | Interest[],
   ) {
+    markDirty();
     setInput((current) => {
       const next = copied(current);
       if (field === "name") next.audiences[side].name = value as string;
@@ -178,6 +208,7 @@ export function Workspace() {
     index: number,
     patch: Partial<Interest>,
   ) {
+    markDirty();
     const next = copied(input);
     next.audiences[side].interests[index] = {
       ...next.audiences[side].interests[index],
@@ -186,6 +217,7 @@ export function Workspace() {
     setInput(next);
   }
   function selectPreset(index: number) {
+    markDirty();
     const preset = presets[index];
     const next = copied(input);
     next.audiences[0].interests = preset.a.map((name) => ({
@@ -198,19 +230,19 @@ export function Workspace() {
     }));
     next.constraints.excludedIds = [];
     setInput(next);
-    setResult(null);
-    setNotice(null);
-    setReplacements([]);
   }
   function reject(id: string) {
+    const previous = result?.options[selected];
+    markDirty();
     const next = copied(input);
     next.constraints.excludedIds = [
       ...new Set([...next.constraints.excludedIds, id]),
     ];
     setInput(next);
-    void generate(next, result?.options[selected]);
+    void generate(next, previous);
   }
   function changeMode(mode: PlanRequest["mode"]) {
+    markDirty();
     const next = copied(input);
     next.mode = mode;
     next.constraints.excludedIds = [];
@@ -218,8 +250,6 @@ export function Workspace() {
       audience.interests.forEach((interest) => delete interest.id),
     );
     setInput(next);
-    setResult(null);
-    setNotice(null);
   }
   function chooseMatch(match: { id: string; name: string; domain: Domain }) {
     if (!disambiguation) return;
@@ -235,6 +265,7 @@ export function Workspace() {
       type: match.domain,
       id: match.id,
     };
+    markDirty();
     setInput(next);
     setDisambiguation(null);
     setError(null);
@@ -391,7 +422,7 @@ export function Workspace() {
               <p>
                 {input.mode === "synthetic"
                   ? "Demo associations and candidate entities are invented fixtures. They are not Qloo results. Live mode requires a Qloo API key."
-                  : "Live requests use the server-side hackathon key. If the key or Qloo service is unavailable, no fixture results will be shown."}
+                  : "Live requests require a server-side key and a separate launch switch after validation. If unavailable, no fixture results will be shown."}
               </p>
             </div>
           </div>
@@ -413,7 +444,7 @@ export function Workspace() {
             </div>
             <span className="mode-help">
               {input.mode === "live"
-                ? "Server-side key required. Results are never mocked."
+                ? "Server-side key and launch approval required. Results are never mocked."
                 : "Explore the complete flow without a key."}
             </span>
           </div>
@@ -570,15 +601,16 @@ export function Workspace() {
                   max="180"
                   step="5"
                   value={input.constraints.maxMovieMinutes}
-                  onChange={(event) =>
+                  onChange={(event) => {
+                    markDirty();
                     setInput((current) => ({
                       ...current,
                       constraints: {
                         ...current.constraints,
                         maxMovieMinutes: Number(event.target.value),
                       },
-                    }))
-                  }
+                    }));
+                  }}
                 />
               </label>
               <label>
@@ -590,15 +622,16 @@ export function Workspace() {
                   max="300"
                   step="5"
                   value={input.constraints.maxProgramMinutes ?? 180}
-                  onChange={(event) =>
+                  onChange={(event) => {
+                    markDirty();
                     setInput((current) => ({
                       ...current,
                       constraints: {
                         ...current.constraints,
                         maxProgramMinutes: Number(event.target.value),
                       },
-                    }))
-                  }
+                    }));
+                  }}
                 />
               </label>
               <fieldset>
@@ -613,6 +646,7 @@ export function Workspace() {
                             rating,
                           )}
                           onChange={(event) => {
+                            markDirty();
                             const next = copied(input);
                             next.constraints.allowedRatings = event.target
                               .checked
@@ -633,12 +667,13 @@ export function Workspace() {
             {input.constraints.excludedIds.length > 0 && (
               <button
                 className="reset-exclusions"
-                onClick={() =>
+                onClick={() => {
+                  markDirty();
                   setInput((current) => ({
                     ...current,
                     constraints: { ...current.constraints, excludedIds: [] },
-                  }))
-                }
+                  }));
+                }}
               >
                 <RotateCcw size={14} /> Clear{" "}
                 {input.constraints.excludedIds.length} rejection(s)
@@ -692,6 +727,7 @@ export function Workspace() {
           id="evidence"
           ref={resultsRef}
           aria-labelledby="results-title"
+          aria-busy={busy}
         >
           <div className="results-head">
             <div>
@@ -701,12 +737,23 @@ export function Workspace() {
               </h2>
             </div>
             <span className="results-meta">
-              {result
-                ? `${result.options.length} VIABLE PATH${result.options.length === 1 ? "" : "S"}`
-                : "AWAITING YOUR AUDIENCES"}
+              {result?.status === "no-solution"
+                ? "NO COMPLETE PATH"
+                : result
+                  ? `${result.options.length} ${result.status === "conceptual" ? "CONCEPTUAL" : "DURATION-CHECKED"} PATH${result.options.length === 1 ? "" : "S"}`
+                  : "AWAITING YOUR AUDIENCES"}
             </span>
           </div>
-          {!result ? (
+          {busy ? (
+            <div className="empty-state" role="status" aria-live="polite">
+              <LoaderCircle className="spin" size={34} />
+              <h3>Comparing both audiences.</h3>
+              <p>
+                Resolving interests, gathering separate evidence, and checking
+                the rules. The result will appear here.
+              </p>
+            </div>
+          ) : !result ? (
             <div className="empty-state">
               <div className="empty-orbit">
                 <span>✳</span>
@@ -774,6 +821,19 @@ export function Workspace() {
                 </div>
               ) : (
                 <>
+                  {result.status === "conceptual" && (
+                    <div className="schedule-warning" role="note">
+                      <strong>
+                        CONCEPTUAL EXPERIENCE — NOT A VERIFIED SCHEDULE
+                      </strong>
+                      <p>
+                        {result.gaps.join(" ")} Film length, rating and
+                        total-program limits remain binding. Confirm missing
+                        metadata independently before booking; screening rights
+                        and availability are also unverified.
+                      </p>
+                    </div>
+                  )}
                   <p className="alternatives-note">{result.alternativesNote}</p>
                   <div
                     className="option-picker"
@@ -812,14 +872,24 @@ export function Workspace() {
                           </span>
                           <h3>{active?.title}</h3>
                           <p>{active?.rationale}</p>
-                          <p className="program-note">
-                            Conceptual program: 20 min listening +{" "}
-                            {active?.candidates[1].entity.duration} min film +
-                            10 min transition + 15 min discussion ={" "}
-                            {active?.programMinutes} min. Screening rights,
-                            availability, ticketing, and venue remain
-                            unverified.
-                          </p>
+                          {active?.scheduleStatus === "duration-verified" ? (
+                            <p className="program-note">
+                              Conceptual program: 20 min listening +{" "}
+                              {active.candidates[1].entity.duration} min film +
+                              10 min transition + 15 min discussion ={" "}
+                              {active.programMinutes} min. Duration and rating
+                              metadata passed the selected limits; screening
+                              rights, availability, ticketing, and venue remain
+                              unverified.
+                            </p>
+                          ) : (
+                            <p className="program-note">
+                              Proposed sequence: 20 min listening, a film of
+                              unverified duration, 10 min transition, and 15 min
+                              discussion. No total duration or screening
+                              schedule is claimed.
+                            </p>
+                          )}
                         </div>
                         <span className="plan-badge">3 ACTS</span>
                       </div>
@@ -878,8 +948,12 @@ export function Workspace() {
                                     <span>
                                       {candidate.entity.domain === "movie" &&
                                       candidate.entity.duration
-                                        ? `${candidate.entity.duration} MIN · ${candidate.entity.contentRating}`
-                                        : labelDomain(candidate.entity.domain)}
+                                        ? `${candidate.entity.duration} MIN · ${candidate.entity.contentRating ?? "RATING UNVERIFIED"}`
+                                        : candidate.entity.domain === "movie"
+                                          ? `RUNTIME UNVERIFIED · ${candidate.entity.contentRating ?? "RATING UNVERIFIED"}`
+                                          : labelDomain(
+                                              candidate.entity.domain,
+                                            )}
                                     </span>
                                     <span>Appears for both audiences</span>
                                   </div>
@@ -980,7 +1054,10 @@ export function Workspace() {
                               </strong>
                               <p>
                                 {candidate.entity.domain === "movie"
-                                  ? `Film metadata passed the ${input.constraints.maxMovieMinutes}-minute film limit, ${input.constraints.maxProgramMinutes ?? 180}-minute total program limit, and allowed rating set.`
+                                  ? active?.scheduleStatus ===
+                                    "duration-verified"
+                                    ? `Film metadata passed the ${input.constraints.maxMovieMinutes}-minute film limit, ${input.constraints.maxProgramMinutes ?? 180}-minute total program limit, and allowed rating set.`
+                                    : `Conceptual only. Unverified: ${active?.unverified.join(" and ")}. Known metadata do not violate the selected limits, but missing values have not passed the hard gates.`
                                   : "This component passed explicit rejection checks."}{" "}
                                 Rights and availability remain unverified.
                               </p>
@@ -1043,16 +1120,28 @@ export function Workspace() {
                         scores.
                       </small>
                       <div className="constraint-recap">
-                        <strong>CHECKED RULES</strong>
+                        <strong>
+                          {active?.scheduleStatus === "conceptual"
+                            ? "RULES PENDING VERIFICATION"
+                            : "CHECKED RULES"}
+                        </strong>
                         <span>
-                          <Check size={15} /> Film ≤{" "}
-                          {input.constraints.maxMovieMinutes} minutes
+                          {active?.scheduleStatus === "duration-verified" && (
+                            <Check size={15} />
+                          )}{" "}
+                          Film ≤ {input.constraints.maxMovieMinutes} minutes
                         </span>
                         <span>
-                          <Check size={15} /> Allowed ratings only
+                          {active?.scheduleStatus === "duration-verified" && (
+                            <Check size={15} />
+                          )}{" "}
+                          Allowed ratings only
                         </span>
                         <span>
-                          <Check size={15} /> Proposed program ≤{" "}
+                          {active?.scheduleStatus === "duration-verified" && (
+                            <Check size={15} />
+                          )}{" "}
+                          Proposed program ≤{" "}
                           {input.constraints.maxProgramMinutes ?? 180} minutes
                         </span>
                         <span>

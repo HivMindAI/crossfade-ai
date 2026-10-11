@@ -66,12 +66,22 @@ function reason(
           (entity.contentRating &&
             other.contentRating &&
             entity.contentRating !== other.contentRating) ||
-          !(entity.duration ?? other.duration) ||
-          !(entity.contentRating ?? other.contentRating)
+          (entity.duration !== undefined &&
+            entity.duration > request.constraints.maxMovieMinutes) ||
+          (other.duration !== undefined &&
+            other.duration > request.constraints.maxMovieMinutes) ||
+          (entity.contentRating !== undefined &&
+            !request.constraints.allowedRatings.includes(
+              entity.contentRating as PlanRequest["constraints"]["allowedRatings"][number],
+            )) ||
+          (other.contentRating !== undefined &&
+            !request.constraints.allowedRatings.includes(
+              other.contentRating as PlanRequest["constraints"]["allowedRatings"][number],
+            ))
         );
       })
     )
-      return "movie: every non-rejected shared film lacks or conflicts on runtime-in-minutes or content-rating metadata; the hard gates cannot be checked.";
+      return "movie: every non-rejected shared film conflicts on metadata or violates a known film or rating rule.";
   }
   return `${domain}: shared entities fail a hard film, total-time, or exclusion rule.`;
 }
@@ -233,18 +243,36 @@ export async function runNegotiation(
   const gaps = DOMAINS.filter((domain) => eligible[domain].length === 0).map(
     (domain) => reason(domain, matrix, request),
   );
+  if (options[0]?.scheduleStatus === "conceptual") {
+    const missing = [
+      ...new Set(options.flatMap((option) => option.unverified)),
+    ];
+    gaps.push(
+      `Scheduling is unverified: obtain independent ${missing.join(" and ")} metadata before applying the film, rating, and total-program gates.`,
+    );
+  }
   const alternativesNote =
     options.length === 3
       ? "Three distinct non-dominated trade-offs were found."
-      : `Only ${options.length} distinct non-dominated trade-off${options.length === 1 ? "" : "s"} could be supported by the available evidence.`;
+      : options.length === 1
+        ? "One fairness-first path is supported. No distinct non-dominated alternative improves one audience while worsening the other."
+        : options.length === 2
+          ? "Two distinct non-dominated paths are supported; no evidence-backed third directional trade-off exists."
+          : "No three-act path is supported under the current evidence and rules.";
   audit.push({
     step: "VERIFY",
     detail: options.length
-      ? `Checked ${options.length} complete path(s) against film, total-program, rating, and exclusion rules; rights and venue remain unverified.`
+      ? options[0].scheduleStatus === "conceptual"
+        ? `Found ${options.length} conceptual path(s). Known constraints and exclusions passed; missing film metadata prevents a verified schedule. No hard rule was waived.`
+        : `Checked ${options.length} complete path(s) against film, total-program, rating, and exclusion rules; rights and venue remain unverified.`
       : "No complete path satisfies the evidence and hard constraints. No constraint was weakened.",
   });
   return {
-    status: options.length ? "ready" : "no-solution",
+    status: options.length
+      ? options[0].scheduleStatus === "conceptual"
+        ? "conceptual"
+        : "ready"
+      : "no-solution",
     mode: request.mode,
     options,
     resolved,

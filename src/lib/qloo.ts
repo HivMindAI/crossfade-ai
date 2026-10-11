@@ -12,11 +12,35 @@ import {
   type SearchMatch,
 } from "./model";
 
-const ORIGIN = "https://hackathon.api.qloo.com";
+const DEFAULT_ORIGIN = "https://hackathon.api.qloo.com";
+const APPROVED_ORIGINS = new Set([DEFAULT_ORIGIN, "https://api.qloo.com"]);
+const MAX_RESPONSE_BYTES = 2_000_000;
+
+function approvedOrigin(value: string): string {
+  try {
+    const url = new URL(value);
+    if (
+      APPROVED_ORIGINS.has(url.origin) &&
+      url.pathname === "/" &&
+      !url.search &&
+      !url.hash &&
+      !url.username &&
+      !url.password
+    )
+      return url.origin;
+  } catch {
+    // Invalid configuration must fail before sending an authenticated request.
+  }
+  throw new AppError(
+    "QLOO_CONFIG",
+    "The configured Qloo API host is not approved.",
+    503,
+  );
+}
 const rawEntity = z
   .object({
-    entity_id: z.string().min(1),
-    name: z.string().min(1),
+    entity_id: z.string().trim().min(1),
+    name: z.string().trim().min(1),
     type: z.string().optional(),
     subtype: z.string().optional(),
     properties: z.record(z.string(), z.unknown()).optional(),
@@ -56,17 +80,21 @@ function influenceSignals(
           : [];
       })
     : Object.entries(record(input) ?? {});
+  const seen = new Set<string>();
   return entries
     .flatMap(([signalId, raw]) => {
       const object = record(raw);
       const score = object ? (object.normalized_score ?? object.score) : raw;
-      return signalIds.includes(signalId) &&
+      if (seen.has(signalId)) return [];
+      const valid =
+        signalIds.includes(signalId) &&
         typeof score === "number" &&
         Number.isFinite(score) &&
         score >= 0 &&
-        score <= 1
-        ? [{ signalId, normalizedInfluence: score }]
-        : [];
+        score <= 1;
+      if (!valid) return [];
+      seen.add(signalId);
+      return [{ signalId, normalizedInfluence: score }];
     })
     .slice(0, signalIds.length);
 }
@@ -80,8 +108,32 @@ function retryDelay(header: string | null, fallback: number): number {
   return Number.isFinite(ms) ? Math.max(0, ms) : fallback;
 }
 
+async function limitedResponseText(response: Response): Promise<string> {
+  const reader = response.body?.getReader();
+  if (!reader) return "";
+  const decoder = new TextDecoder();
+  let bytes = 0;
+  let text = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    bytes += value.byteLength;
+    if (bytes > MAX_RESPONSE_BYTES) {
+      await reader.cancel();
+      throw new AppError(
+        "QLOO_RESPONSE_SIZE",
+        "Qloo returned an oversized response.",
+        502,
+      );
+    }
+    text += decoder.decode(value, { stream: true });
+  }
+  return text + decoder.decode();
+}
+
 export class QlooClient implements CulturalSource {
   private attempts = 0;
+  private origin: string;
   constructor(
     private key: string,
     private transport: typeof fetch = fetch,
@@ -89,6 +141,7 @@ export class QlooClient implements CulturalSource {
     private timeoutMs = 8000,
     private wait: (ms: number) => Promise<void> = (ms) =>
       new Promise((resolve) => setTimeout(resolve, ms)),
+    origin = DEFAULT_ORIGIN,
   ) {
     if (!key.trim())
       throw new AppError(
@@ -96,6 +149,7 @@ export class QlooClient implements CulturalSource {
         "Live Qloo mode requires QLOO_API_KEY.",
         503,
       );
+    this.origin = approvedOrigin(origin);
   }
 
   metrics() {
@@ -103,7 +157,7 @@ export class QlooClient implements CulturalSource {
   }
 
   private async get(path: string, params: URLSearchParams, allow404 = false) {
-    const url = new URL(path, ORIGIN);
+    const url = new URL(path, this.origin);
     url.search = params.toString();
     for (let attempt = 0; attempt < 3; attempt++) {
       if (this.attempts >= this.maxAttempts)
@@ -116,7 +170,14 @@ export class QlooClient implements CulturalSource {
           headers: { "X-Api-Key": this.key, Accept: "application/json" },
           signal: controller.signal,
           cache: "no-store",
+          redirect: "manual",
         });
+        if (response.status >= 300 && response.status < 400)
+          throw new AppError(
+            "QLOO_REDIRECT",
+            "Qloo redirected the request; no credential was forwarded.",
+            502,
+          );
         if (response.status === 401 || response.status === 403)
           throw new AppError(
             "QLOO_AUTH",
@@ -152,19 +213,13 @@ export class QlooClient implements CulturalSource {
             "Qloo could not process this request.",
             502,
           );
-        if (Number(response.headers.get("content-length")) > 2_000_000)
+        if (Number(response.headers.get("content-length")) > MAX_RESPONSE_BYTES)
           throw new AppError(
             "QLOO_RESPONSE_SIZE",
             "Qloo returned an oversized response.",
             502,
           );
-        const body = await response.text();
-        if (body.length > 2_000_000)
-          throw new AppError(
-            "QLOO_RESPONSE_SIZE",
-            "Qloo returned an oversized response.",
-            502,
-          );
+        const body = await limitedResponseText(response);
         let parsed: unknown;
         try {
           parsed = JSON.parse(body);
@@ -220,8 +275,14 @@ export class QlooClient implements CulturalSource {
       take: "8",
     });
     const response = await this.get("/search", params, true);
+    const seen = new Set<string>();
     return response.results.entities
-      .filter((item) => !item.type || item.type === entityType(domain))
+      .filter((item) => {
+        if (item.type && item.type !== entityType(domain)) return false;
+        if (seen.has(item.entity_id)) return false;
+        seen.add(item.entity_id);
+        return true;
+      })
       .map((item) => ({ id: item.entity_id, name: item.name, domain }));
   }
 
@@ -234,6 +295,8 @@ export class QlooClient implements CulturalSource {
     if (signalIds.length === 0)
       return { entities: [], signalIds, source: "qloo", ...options };
     if (
+      !Number.isInteger(options.take) ||
+      !Number.isInteger(options.page) ||
       options.take < 1 ||
       options.take > 50 ||
       options.page < 1 ||
@@ -291,5 +354,18 @@ export function liveSource(): QlooClient {
       "Live Qloo mode requires QLOO_API_KEY.",
       503,
     );
-  return new QlooClient(key.data);
+  if (process.env.QLOO_LIVE_ENABLED !== "1")
+    throw new AppError(
+      "QLOO_LIVE_DISABLED",
+      "Live Qloo planning is disabled until its validation and public-demo gates are approved.",
+      503,
+    );
+  return new QlooClient(
+    key.data,
+    fetch,
+    24,
+    8000,
+    undefined,
+    process.env.QLOO_API_ORIGIN?.trim() || DEFAULT_ORIGIN,
+  );
 }

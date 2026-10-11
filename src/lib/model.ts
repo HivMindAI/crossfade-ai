@@ -77,11 +77,13 @@ export type Blueprint = {
   candidates: Candidate[];
   balance: [number, number];
   path: "fairness" | "audience-a" | "audience-b";
-  programMinutes: number;
+  programMinutes: number | null;
+  scheduleStatus: "duration-verified" | "conceptual";
+  unverified: ("runtime" | "content rating")[];
   rationale: string;
 };
 export type PlanResult = {
-  status: "ready" | "no-solution";
+  status: "ready" | "conceptual" | "no-solution";
   mode: "synthetic" | "live";
   options: Blueprint[];
   resolved: [SearchMatch[], SearchMatch[]];

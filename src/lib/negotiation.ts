@@ -26,15 +26,23 @@ function mergedEntity(a: Entity, b: Entity): Entity | undefined {
 function permitted(entity: Entity, request: PlanRequest): boolean {
   if (request.constraints.excludedIds.includes(entity.id)) return false;
   if (entity.domain !== "movie") return true;
-  if (!entity.duration || !entity.contentRating) return false;
-  if (entity.duration > request.constraints.maxMovieMinutes) return false;
-  if (
-    entity.duration + PROGRAM_OVERHEAD_MINUTES >
-    (request.constraints.maxProgramMinutes ?? DEFAULT_MAX_PROGRAM_MINUTES)
-  )
-    return false;
-  return request.constraints.allowedRatings.includes(
-    entity.contentRating as PlanRequest["constraints"]["allowedRatings"][number],
+  // Missing metadata permits only a conceptual option. Known violations still
+  // disqualify the film; unknown values never count as a passed hard gate.
+  if (entity.duration !== undefined) {
+    if (!Number.isInteger(entity.duration) || entity.duration <= 0)
+      return false;
+    if (entity.duration > request.constraints.maxMovieMinutes) return false;
+    if (
+      entity.duration + PROGRAM_OVERHEAD_MINUTES >
+      (request.constraints.maxProgramMinutes ?? DEFAULT_MAX_PROGRAM_MINUTES)
+    )
+      return false;
+  }
+  return (
+    entity.contentRating === undefined ||
+    request.constraints.allowedRatings.includes(
+      entity.contentRating as PlanRequest["constraints"]["allowedRatings"][number],
+    )
   );
 }
 
@@ -113,6 +121,10 @@ export function negotiate(
     for (const movie of eligible.movie.slice(0, 12)) {
       for (const book of eligible.book.slice(0, 12)) {
         const picks = [artist, movie, book];
+        const unverified: Blueprint["unverified"] = [];
+        if (movie.entity.duration === undefined) unverified.push("runtime");
+        if (movie.entity.contentRating === undefined)
+          unverified.push("content rating");
         const balance: [number, number] = [
           picks.reduce((sum, pick) => sum + pick.ranks[0], 0),
           picks.reduce((sum, pick) => sum + pick.ranks[1], 0),
@@ -123,15 +135,28 @@ export function negotiate(
           candidates: picks,
           balance,
           path: "fairness",
-          programMinutes: movie.entity.duration! + PROGRAM_OVERHEAD_MINUTES,
+          programMinutes:
+            movie.entity.duration === undefined
+              ? null
+              : movie.entity.duration + PROGRAM_OVERHEAD_MINUTES,
+          scheduleStatus: unverified.length
+            ? "conceptual"
+            : "duration-verified",
+          unverified,
           rationale:
             "A listening opening, shared screening, and reading prompt. The sequence is a creative interpretation; the rank totals are algorithmic, ordinal scores.",
         });
       }
     }
   }
-  const frontier = combinations.filter(
-    (candidate) => !combinations.some((other) => dominates(other, candidate)),
+  // Never let an unverified suggestion displace a valid scheduled path.
+  const pool = combinations.some(
+    (item) => item.scheduleStatus === "duration-verified",
+  )
+    ? combinations.filter((item) => item.scheduleStatus === "duration-verified")
+    : combinations;
+  const frontier = pool.filter(
+    (candidate) => !pool.some((other) => dominates(other, candidate)),
   );
   frontier.sort(compareFairness);
   const fair = frontier[0];

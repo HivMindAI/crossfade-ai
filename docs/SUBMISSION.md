@@ -30,6 +30,7 @@ The [live journey protocol](LIVE_JOURNEY.md) predeclares profiles, redacted metr
 - [x] [Milestone 3 implementation CI reviewed and passed](https://github.com/HivMindAI/crossfade-ai/actions/runs/38111776786) for commit `36ab75e`
 - [x] Milestone 4 shared live-plan quota implemented with an atomic Redis reservation and offline fail-closed tests
 - [x] Milestone 4 local gates passed: 76/76 unit/integration tests, 10/10 browser tests, formatting, types, lint, build, and zero current audit advisories
+- [x] [Milestone 4 implementation CI reviewed and passed](https://github.com/HivMindAI/crossfade-ai/actions/runs/38113489941) for commit `c5a424c`
 - [ ] Claimed $0 shared Redis provider configured and its real 429/failure behavior verified
 - [ ] Authenticated Qloo search and insights verified
 - [ ] Qloo API host verified against the issued key instructions

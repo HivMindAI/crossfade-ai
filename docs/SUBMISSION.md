@@ -25,7 +25,7 @@ After a verified public deployment, replace the synthetic-mode demonstration wit
 - [x] Automated test and CI configuration; [initial PR CI passed](https://github.com/HivMindAI/crossfade-ai/actions/runs/38065856447)
 - [x] [Milestone 2 PR CI reviewed and passed](https://github.com/HivMindAI/crossfade-ai/actions/runs/38070292125) for hardening commit `4872b7e`
 - [x] Milestone 3 local offline gates passed: 62/62 unit/integration tests, 9/9 browser tests, formatting, types, lint, build, and current zero-advisory audits
-- [ ] Milestone 3 PR CI reviewed after publication
+- [x] [Milestone 3 implementation CI reviewed and passed](https://github.com/HivMindAI/crossfade-ai/actions/runs/38111776786) for commit `36ab75e`
 - [ ] Authenticated Qloo search and insights verified
 - [ ] Qloo API host verified against the issued key instructions
 - [ ] Conceptual live results and their unverified scheduling gates checked against an authenticated response

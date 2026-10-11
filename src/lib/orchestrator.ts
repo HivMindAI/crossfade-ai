@@ -234,10 +234,12 @@ export async function runNegotiation(
       detail: `${domain} page-two recovery ${eligible[domain].length ? "found eligible shared evidence" : "did not find an eligible shared candidate"}.`,
     });
   }
+  const sharedEligible = Object.fromEntries(
+    DOMAINS.map((domain) => [domain, eligible[domain].length]),
+  ) as Record<Domain, number>;
   audit.push({
     step: "EVALUATE",
-    detail:
-      "Intersect stable entity IDs; compare within-request ranks and retain non-dominated ordinal trade-offs.",
+    detail: `Intersect stable entity IDs; eligible shared candidates: ${DOMAINS.map((domain) => `${domain} ${sharedEligible[domain]}`).join(", ")}. Compare within-request ranks and retain non-dominated ordinal trade-offs.`,
   });
   const options = negotiate(matrix, request);
   const gaps = DOMAINS.filter((domain) => eligible[domain].length === 0).map(
@@ -283,6 +285,7 @@ export async function runNegotiation(
       sourceCalls: calls,
       recoveryCalls,
       elapsedMs: Math.round(performance.now() - startedAt),
+      sharedEligible,
       ...source.metrics?.(),
     },
     warning:

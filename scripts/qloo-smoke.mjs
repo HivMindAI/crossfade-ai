@@ -35,6 +35,32 @@ try {
   process.exit(2);
 }
 let attempts = 0;
+async function boundedJson(response, path) {
+  const limit = 2_000_000;
+  if (Number(response.headers.get("content-length")) > limit)
+    throw new Error(`${path} returned an oversized response`);
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error(`${path} returned no response body`);
+  const decoder = new TextDecoder();
+  let size = 0;
+  let text = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > limit) {
+      await reader.cancel();
+      throw new Error(`${path} returned an oversized response`);
+    }
+    text += decoder.decode(value, { stream: true });
+  }
+  try {
+    return JSON.parse(text + decoder.decode());
+  } catch {
+    throw new Error(`${path} returned invalid JSON`);
+  }
+}
+
 async function call(path, params) {
   if (attempts >= 3) throw new Error("smoke-check request limit reached");
   const url = new URL(path, origin);
@@ -51,12 +77,7 @@ async function call(path, params) {
   if (response.status === 401 || response.status === 403)
     throw new Error("authentication rejected by Qloo");
   if (!response.ok) throw new Error(`${path} returned HTTP ${response.status}`);
-  let body;
-  try {
-    body = await response.json();
-  } catch {
-    throw new Error(`${path} returned invalid JSON`);
-  }
+  const body = await boundedJson(response, path);
   if (body?.success === false || !Array.isArray(body?.results?.entities))
     throw new Error(`${path} returned an unsuccessful or malformed response`);
   if (

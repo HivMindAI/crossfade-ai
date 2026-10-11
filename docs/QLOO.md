@@ -17,6 +17,21 @@ The public reference documents a movie content-rating filter, but does not guara
 
 The client caps actual HTTP attempts at 24 across logical calls, including retries, and times out each attempt after 8 seconds. It never follows an HTTP redirect with `X-Api-Key`. Search documents HTTP 429; the client honors short `Retry-After` guidance and returns a rate-limit error rather than waiting through a long delay inside a planning request. No undocumented numeric Qloo rate quota is assumed. The 24-attempt limit is an application safeguard, **not** a published Qloo allowance.
 
-`npm run qloo:smoke` is offline by default. With an authorized key supplied through the process environment, `npm run qloo:smoke -- --live-once` performs at most three sequential calls: Search, movie Insights, book Insights. It makes no retry, refuses redirects, and reports response structure, nonempty results, and explainability-object counts without printing credentials, IDs, names, or raw payloads. No authenticated smoke run has occurred.
+`npm run qloo:smoke` is offline by default. With an authorized key supplied through the process environment, `npm run qloo:smoke -- --live-once` performs at most three sequential calls: Search, movie Insights, book Insights. It makes no retry, refuses redirects, caps each response at 2 MB, and reports response structure, nonempty results, and explainability-object counts without printing credentials, IDs, names, or raw payloads. No authenticated smoke run has occurred.
 
-Before running it, the account owner should verify the key's intended host, access, and request limits; set `QLOO_API_KEY` as a local process secret (not in a shell command, repository, or log); set `QLOO_API_ORIGIN` only if the key requires the standard host; and explicitly approve this small call set. A pass validates only those endpoints and response gates. It does **not** establish film runtime minutes, screening rights, full live planning quality, or public deployment readiness. A separate test of the full live UI and an independently sourced runtime/rating check remain mandatory. The app's live route also requires `QLOO_LIVE_ENABLED=1`; keep it off until those gates and public abuse controls are reviewed. The smoke script does not change that switch.
+Before running it, the account owner should verify the key's intended host, access, and request limits from the key issuer; set `QLOO_API_KEY` as a local process secret (not in a shell command, repository, or log); set `QLOO_API_ORIGIN` only if the key requires the standard host; and explicitly approve this small call set. A pass validates only those endpoints and response gates. It does **not** establish film runtime minutes, screening rights, useful shared-entity coverage, or public deployment readiness. A separate [full live journey protocol](LIVE_JOURNEY.md) and an independently sourced runtime/rating check remain mandatory. The app's live route also requires `QLOO_LIVE_ENABLED=1` **and** a healthy, configured shared quota guard; keep the switch off until those gates and public abuse controls are reviewed. The smoke script does not change that switch or use the shared guard.
+
+For a future **authorized** Windows PowerShell smoke run, this prompt keeps the key out of command history and screen output. Enter only the host confirmed by the issuer. If it is outside the two approved origins, stop and update the contract review before any request. The smoke script never changes `QLOO_LIVE_ENABLED`.
+
+```powershell
+$env:QLOO_API_ORIGIN = Read-Host "Issuer-confirmed Qloo HTTPS origin"
+$env:QLOO_API_KEY = [System.Net.NetworkCredential]::new("", (Read-Host "Qloo API key" -AsSecureString)).Password
+try {
+  npm run qloo:smoke -- --live-once
+} finally {
+  Remove-Item Env:QLOO_API_KEY
+  Remove-Item Env:QLOO_API_ORIGIN
+}
+```
+
+Do not paste the key into the prompt for `QLOO_API_ORIGIN`. A failed smoke run is a blocker for the full live journey; do not repeat calls against guessed hosts.

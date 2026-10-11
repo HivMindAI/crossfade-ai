@@ -159,7 +159,7 @@ export function Workspace() {
         setReplacements(changes);
         setNotice(
           changes.length
-            ? `The plan was repaired after your rejection. ${changes.length} component${changes.length === 1 ? "" : "s"} changed; compare the replacements below.`
+            ? `The rejected component was excluded and both audiences were reevaluated. ${changes.length} component${changes.length === 1 ? "" : "s"} changed; compare the replacements below.`
             : "The same components remain after reevaluation; review the decision trace.",
         );
       } else {
@@ -688,7 +688,7 @@ export function Workspace() {
             <button
               className="button button-dark"
               disabled={busy}
-              onClick={() => void generate(input, active)}
+              onClick={() => void generate(input)}
             >
               {busy ? (
                 <>
@@ -696,7 +696,7 @@ export function Workspace() {
                 </>
               ) : (
                 <>
-                  {result ? "Repair the experience" : "Find the shared ground"}
+                  {result ? "Run again" : "Find the shared ground"}
                   <ArrowUpRight size={19} />
                 </>
               )}
@@ -994,7 +994,9 @@ export function Workspace() {
                               </div>
                               <p>{candidate.explanation}</p>
                               <strong className="evidence-label">
-                                Qloo-returned evidence
+                                {result.mode === "synthetic"
+                                  ? "Synthetic fixture evidence"
+                                  : "Qloo-returned evidence"}
                               </strong>
                               <p>
                                 {result.mode === "synthetic"

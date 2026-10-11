@@ -94,6 +94,7 @@ export type PlanResult = {
     sourceCalls: number;
     recoveryCalls: number;
     elapsedMs: number;
+    sharedEligible: Record<Domain, number>;
     httpAttempts?: number;
   };
   warning?: string;

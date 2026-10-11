@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { ZodError } from "zod";
 import { AppError } from "@/lib/errors";
+import { reserveLivePlan } from "@/lib/live-quota";
 import { requestSchema } from "@/lib/model";
 import { runNegotiation } from "@/lib/orchestrator";
 import { liveSource } from "@/lib/qloo";
@@ -44,6 +45,7 @@ export async function POST(request: Request) {
     const body = await limitedBody(request);
     const parsed = requestSchema.parse(JSON.parse(body));
     const source = parsed.mode === "live" ? liveSource() : syntheticSource;
+    if (parsed.mode === "live") await reserveLivePlan();
     const result = await runNegotiation(parsed, source);
     return NextResponse.json(result, {
       headers: { "Cache-Control": "no-store" },

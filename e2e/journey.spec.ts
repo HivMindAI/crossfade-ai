@@ -19,7 +19,9 @@ test("synthetic negotiation, evidence, and live repair", async ({ page }) => {
   const first = page.locator(".act h4").first();
   const original = await first.textContent();
   await page.getByRole("tab", { name: "Evidence" }).click();
-  await expect(page.getByText("Qloo-returned evidence").first()).toBeVisible();
+  await expect(
+    page.getByText("Synthetic fixture evidence").first(),
+  ).toBeVisible();
   await expect(page.getByText("Algorithmic score").first()).toBeVisible();
   await expect(page.getByText("Creative interpretation").first()).toBeVisible();
   await expect(
@@ -28,7 +30,9 @@ test("synthetic negotiation, evidence, and live repair", async ({ page }) => {
   await page.getByRole("tab", { name: "Blueprint" }).click();
   await page.locator(".reject-button").first().click();
   await expect(
-    page.getByText(/The plan was repaired after your rejection/),
+    page.getByText(
+      /The rejected component was excluded and both audiences were reevaluated/,
+    ),
   ).toBeVisible();
   await expect(page.locator(".act h4").first()).not.toHaveText(original ?? "");
 });
@@ -180,6 +184,21 @@ test("editing a constraint clears the prior plan until it is reevaluated", async
   await expect(
     page.getByText(/Your shared experience begins here/),
   ).toBeVisible();
+});
+
+test("rerunning the same inputs does not claim a rejection", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Find the shared ground" }).click();
+  await expect(page.getByText("3 DURATION-CHECKED PATHS")).toBeVisible();
+  await page.getByRole("button", { name: "Run again" }).click();
+  await expect(
+    page.getByText("Evidence gathered and alternatives evaluated."),
+  ).toBeVisible();
+  await expect(page.getByText(/rejected component was excluded/)).toHaveCount(
+    0,
+  );
 });
 
 test("mobile layout keeps the planning journey readable without horizontal overflow", async ({

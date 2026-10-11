@@ -4,7 +4,7 @@
 
 > **Current status:** The local end-to-end journey works with **SYNTHETIC / NOT REAL QLOO DATA**. No `QLOO_API_KEY` is available in this runtime, so Search and Insights have **not** completed an authenticated round trip. Live film suggestions can be conceptual when Qloo does not provide verified runtime minutes; they are not schedules. No public demo has been deployed or submitted.
 
-The implementation is under review in [PR #1](https://github.com/HivMindAI/crossfade-ai/pull/1) on `feature/crossfade-mvp`; `main` has not been merged. Earlier [MVP CI](https://github.com/HivMindAI/crossfade-ai/actions/runs/38065856447) and [Milestone 2 CI](https://github.com/HivMindAI/crossfade-ai/actions/runs/38070292125) passed. Milestone 3 verification is recorded in [the validation log](docs/VALIDATION.md).
+The implementation is under review in [PR #1](https://github.com/HivMindAI/crossfade-ai/pull/1) on `feature/crossfade-mvp`; `main` has not been merged. [Milestone 3 final-head CI passed](https://github.com/HivMindAI/crossfade-ai/actions/runs/38111917781). Current offline verification is recorded in [the validation log](docs/VALIDATION.md).
 
 ## Run locally
 
@@ -15,9 +15,9 @@ npm ci
 npm run dev
 ```
 
-Open <http://localhost:3000>. The default **Synthetic demo** mode needs no credentials. Choose a preset, select **Find the shared ground**, inspect up to three evidence-supported paths, reject a component, or change film and total-program rules and select **Repair the experience**.
+Open <http://localhost:3000>. The default **Synthetic demo** mode needs no credentials. Choose a preset, select **Find the shared ground**, inspect up to three evidence-supported paths, reject a component, or change film and total-program rules and run the planner again.
 
-To try live Qloo **after** the separate integration and abuse-control gates, create `.env.local` from `.env.example`, set `QLOO_API_KEY` privately, match `QLOO_API_ORIGIN` to the key issuer's instructions, and set `QLOO_LIVE_ENABLED=1` as an explicit server-side launch switch. Only the hackathon and standard Qloo HTTPS origins are accepted. Select **Live Qloo** in the UI. The key remains server-side. Without both the key and launch switch the planner fails closed; it never falls back to fixtures. The bounded smoke script is a separate, explicit validation step and does not activate the app's live mode.
+To try live Qloo **after** the separate integration and abuse-control gates, set `QLOO_API_KEY` privately, match `QLOO_API_ORIGIN` to the key issuer's instructions, configure the shared Redis quota, and set `QLOO_LIVE_ENABLED=1` as an explicit server-side launch switch. Only the hackathon and standard Qloo HTTPS origins are accepted. Select **Live Qloo** in the UI. Keys and the Redis token remain server-side. Missing key, launch switch, or healthy quota guard fails closed; the planner never falls back to fixtures. The bounded smoke script is a separate, explicit validation step and does not activate the app's live mode. See [secure deployment setup](docs/DEPLOYMENT.md).
 
 ## Verification
 
@@ -47,7 +47,7 @@ Set `QLOO_API_KEY` in the local process environment or deployment secret manager
 2. **Gather:** The orchestrator requests artist, movie, and book Insights separately for each audience, with at most three concurrent calls. When a full result page leaves a required domain without an eligible shared candidate, it conditionally requests page two for only the full side(s). Every recovery decision is recorded.
 3. **Negotiate:** Candidates must appear by the same entity ID in both result sets. The algorithm compares within-request rank totals, removes dominated plans, and selects a fairness-first plan plus genuinely A- and B-favoring trade-offs when they exist. It shows fewer paths otherwise.
 4. **Check rules:** Known violations of film length, total program time, rating, or explicit rejections are excluded. A plan is **duration-verified** only when its film runtime and rating are known and pass those limits. Missing runtime/rating yields a clearly marked **conceptual** option, with no certified schedule or total time. Conflicting metadata or known violations can still produce `no-solution`. The proposed non-film agenda is 45 minutes; no rule is silently weakened.
-5. **Repair:** Rejection or a changed rule triggers a new run. Qloo exclusions are sent upstream and checked again locally. The interface shows changed components, missing evidence, and a redacted PLAN → SELECT TOOLS → EXECUTE → EVALUATE → VERIFY / REPLAN trace.
+5. **Repair:** Rejection or a changed rule triggers a new run. Qloo exclusions are sent upstream and checked again locally. The interface shows changed components, eligible shared-candidate counts by domain, missing evidence, and a redacted PLAN → SELECT TOOLS → EXECUTE → EVALUATE → VERIFY / REPLAN trace.
 
 Rank sums are an **algorithmic ordering device**, not confidence, probabilities, or comparable affinity values from different Qloo requests. Qloo-returned evidence, recognized per-result influence signals, constraints, missing evidence, and creative framing are shown separately. The sequence and experience framing are creative interpretations. No LLM is used; the tool-using orchestration and negotiation are deterministic, bounded code.
 
@@ -60,6 +60,7 @@ The public Qloo reference does not specify a movie runtime field with a guarante
 | `src/app/page.tsx`, `src/components/workspace.tsx` | Responsive product experience and plan repair interaction |
 | `src/app/api/plan/route.ts` | Validated server API and safe error responses |
 | `src/lib/qloo.ts` | Server-only Qloo Search and Insights client |
+| `src/lib/live-quota.ts` | Atomic, shared, fail-closed budget for live plans |
 | `src/lib/orchestrator.ts` | Tool selection, budget, audit, replanning |
 | `src/lib/negotiation.ts` | Deterministic overlap, constraints, and alternatives |
 | `src/lib/synthetic.ts` | Clearly labeled invented development fixture source |
@@ -67,18 +68,18 @@ The public Qloo reference does not specify a movie runtime field with a guarante
 | `e2e/journey.spec.ts` | Browser journey for planning, evidence, and repair |
 | `scripts/qloo-smoke.mjs` | Authenticated live endpoint smoke check |
 
-More details: [architecture](docs/ARCHITECTURE.md), [Qloo contract](docs/QLOO.md), [demo and submission draft](docs/SUBMISSION.md), [validation log](docs/VALIDATION.md).
+More details: [architecture](docs/ARCHITECTURE.md), [Qloo contract](docs/QLOO.md), [live journey protocol](docs/LIVE_JOURNEY.md), [demo and submission draft](docs/SUBMISSION.md), [validation log](docs/VALIDATION.md).
 
 ## Security and reliability
 
 - The key is read only on the server and sent in `X-Api-Key`. `.env*` is ignored except `.env.example`. Live planning is disabled by default even if a key exists; `QLOO_LIVE_ENABLED=1` is required after release review.
-- The API streams and caps request bodies at 16 KiB, checks same-origin browser requests, ignores untrusted forwarding headers, limits each run to 16 logical source calls, and applies a per-process global rate window. This is a zero-cost abuse brake, not a distributed production rate limit.
+- The API streams and caps request bodies at 16 KiB, checks same-origin browser requests, ignores untrusted forwarding headers, limits each run to 16 logical source calls, and applies a per-process global rate window. Before a live plan, an approved shared Redis endpoint atomically reserves one plan against an hourly cross-instance ceiling. The guard refuses live work on missing configuration or provider failure; its real provider behavior remains to be validated.
 - The client caps itself at 24 actual Qloo HTTP attempts per plan, including retries (this is an application cap, not a Qloo quota). Calls time out after 8 seconds, never follow redirects with the key, retry short 429/5xx/network failures at most twice, honor bounded `Retry-After`, and return safe errors for authentication, rate limits, invalid JSON, and malformed responses.
 - The UI receives selected entity IDs, names, ranks, and redacted execution notes, not full Qloo payloads or credentials.
 - Synthetic mode is labeled throughout the interface and never claims Qloo provenance.
 
 ## Deployment and submission gate
 
-`vercel.json` configures the Next.js framework; use an available free tier only after its limits have been checked by the account owner. Configure `QLOO_API_KEY` only as a server-side deployment secret. The current per-process rate window is **not** sufficient for a public multi-instance demo; add a provider-level rate rule or a shared limiter before release, and check Qloo request limits with the account owner. Do not submit until an authenticated Qloo run and a public end-to-end test pass separately. Deployment has **not** been authorized. See [deployment gates](docs/DEPLOYMENT.md) and the [submission checklist](docs/SUBMISSION.md).
+`vercel.json` configures the Next.js framework; use an eligible free tier only after its terms and limits have been checked by the account owner. Configure `QLOO_API_KEY` and the shared Redis token only as server-side secrets. The Redis guard is implemented and offline-tested, but **no real provider configuration or public abuse test has been verified**. Align its ceiling with Qloo's issued limit and add an edge per-source rule where available. Do not submit until authenticated Qloo and public end-to-end tests pass separately. Deployment has **not** been authorized. See [deployment gates](docs/DEPLOYMENT.md) and the [submission checklist](docs/SUBMISSION.md).
 
 The existing [MIT license](LICENSE) is preserved.

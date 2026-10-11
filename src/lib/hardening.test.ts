@@ -85,6 +85,7 @@ describe("conditional planning and negotiation hardening", () => {
       "artist-b-2",
     ]);
     expect(result.metrics).toMatchObject({ sourceCalls: 10, recoveryCalls: 2 });
+    expect(result.metrics.sharedEligible.artist).toBe(1);
     expect(result.metrics.elapsedMs).toBeGreaterThanOrEqual(0);
     expect(peak).toBeGreaterThan(1);
     expect(peak).toBeLessThanOrEqual(3);
@@ -120,6 +121,7 @@ describe("conditional planning and negotiation hardening", () => {
       expect.stringContaining("book: the audiences have no shared entity IDs"),
     ]);
     expect(result.metrics).toMatchObject({ sourceCalls: 8, recoveryCalls: 0 });
+    expect(result.metrics.sharedEligible.book).toBe(0);
     expect(
       result.audit.some((item) =>
         item.detail.includes("ask the user to revise"),
@@ -202,6 +204,67 @@ describe("conditional planning and negotiation hardening", () => {
       ),
     ).toBe(true);
     expect(final.audit.some((item) => item.step === "REPLAN")).toBe(true);
+  });
+
+  it("replans a mock Qloo-style conceptual journey through rejection and no-solution", async () => {
+    const request = base();
+    request.mode = "live";
+    const source: CulturalSource = {
+      async search(name, domain) {
+        return [{ id: `mock-seed-${name}`, name, domain }];
+      },
+      async insights(domain, signalIds, excludedIds, options) {
+        const sideA = signalIds[0].includes("Miles");
+        const order = sideA ? [1, 2] : [2, 1];
+        return {
+          entities: order
+            .map((index) => entity(`mock-${domain}-${index}`, domain))
+            .filter((item) => !excludedIds.includes(item.id))
+            .map((item) =>
+              domain === "movie"
+                ? { ...item, duration: undefined, contentRating: undefined }
+                : item,
+            ),
+          signalIds,
+          source: "qloo",
+          ...options,
+        };
+      },
+    };
+    const first = await runNegotiation(request, source);
+    expect(first.status).toBe("conceptual");
+    expect(first.warning).toBeUndefined();
+    expect(first.options).toHaveLength(3);
+    expect(
+      first.options.every((option) => option.scheduleStatus === "conceptual"),
+    ).toBe(true);
+    expect(first.metrics.sharedEligible).toEqual({
+      artist: 2,
+      movie: 2,
+      book: 2,
+    });
+
+    const rejectedMovie = first.options[0].candidates[1].entity.id;
+    request.constraints.excludedIds.push(rejectedMovie);
+    const repaired = await runNegotiation(request, source);
+    expect(repaired.status).toBe("conceptual");
+    expect(repaired.metrics.sharedEligible.movie).toBe(1);
+    expect(
+      repaired.options.every((option) =>
+        option.candidates.every(
+          (candidate) => candidate.entity.id !== rejectedMovie,
+        ),
+      ),
+    ).toBe(true);
+    expect(repaired.audit.some((step) => step.step === "REPLAN")).toBe(true);
+
+    request.constraints.excludedIds.push(
+      `mock-movie-${rejectedMovie.endsWith("1") ? "2" : "1"}`,
+    );
+    const exhausted = await runNegotiation(request, source);
+    expect(exhausted.status).toBe("no-solution");
+    expect(exhausted.metrics.sharedEligible.movie).toBe(0);
+    expect(exhausted.gaps).toEqual([expect.stringContaining("movie:")]);
   });
 
   it("fails before any source call when the budget cannot cover baseline work", async () => {

@@ -18,7 +18,10 @@ const requestBody = {
   },
 };
 
-afterEach(() => vi.unstubAllEnvs());
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
+});
 
 it("fails closed in production live mode without a configured Qloo key", async () => {
   vi.stubEnv("NODE_ENV", "production");
@@ -53,6 +56,32 @@ it("does not dispatch live Qloo planning when the launch switch is off", async (
   );
   expect(response.status).toBe(503);
   expect(await response.json()).toMatchObject({ error: "QLOO_LIVE_DISABLED" });
+});
+
+it("blocks live planning before Qloo when the shared guard is not configured", async () => {
+  vi.stubEnv("NODE_ENV", "production");
+  vi.stubEnv("QLOO_API_KEY", "offline-test-value");
+  vi.stubEnv("QLOO_LIVE_ENABLED", "1");
+  vi.stubEnv("UPSTASH_REDIS_REST_URL", "");
+  vi.stubEnv("UPSTASH_REDIS_REST_TOKEN", "");
+  vi.stubEnv("QLOO_LIVE_PLANS_PER_HOUR", "");
+  const transport = vi.fn();
+  vi.stubGlobal("fetch", transport);
+  const response = await POST(
+    new Request("https://crossfade.example/api/plan", {
+      method: "POST",
+      headers: {
+        Origin: "https://crossfade.example",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(requestBody),
+    }),
+  );
+  expect(response.status).toBe(503);
+  expect(await response.json()).toMatchObject({
+    error: "QLOO_GUARD_UNAVAILABLE",
+  });
+  expect(transport).not.toHaveBeenCalled();
 });
 
 it("rejects a cross-site request despite spoofed forwarding headers", async () => {

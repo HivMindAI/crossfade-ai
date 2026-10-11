@@ -29,8 +29,7 @@ This PR contains the existing CROSSFADE MVP and Milestones 2–5 on `feature/cro
 - Production audit: **zero advisories**. Full npm audit: **five high development-only advisories** in `eslint-config-next → @next/eslint-plugin-next → fast-glob → micromatch → braces`; the advisory offers no compatible patched `braces` release and suggests an incompatible Next 14 lint-config downgrade. Recheck before release.
 - Synthetic 40×40×40 Pareto benchmark: **64,000 combinations in 327 ms** on the local Windows runner; this is not live Qloo latency.
 - `npm run qloo:smoke` ran in offline mode and sent **zero authenticated requests**. Offline transport and Redis mocks are not live provider validation.
-- [Milestone 4 implementation CI passed](https://github.com/HivMindAI/crossfade-ai/actions/runs/38113489941), including production audit, formatting, types, lint, tests, build, and Chromium browser tests.
-- [Milestone 3 final-head CI passed](https://github.com/HivMindAI/crossfade-ai/actions/runs/38111917781). See [PR checks](https://github.com/HivMindAI/crossfade-ai/pull/1/checks) and the [validation log](https://github.com/HivMindAI/crossfade-ai/blob/feature/crossfade-mvp/docs/VALIDATION.md) for the current branch-head CI and detailed checks.
+- [Milestone 5 implementation PR CI passed](https://github.com/HivMindAI/crossfade-ai/actions/runs/38137301753) and [push CI passed](https://github.com/HivMindAI/crossfade-ai/actions/runs/38137299107) for commit `b0c8a94c2aaee2f20b7684730d5f4e2846869fb7`. See [PR checks](https://github.com/HivMindAI/crossfade-ai/pull/1/checks) and the [validation log](https://github.com/HivMindAI/crossfade-ai/blob/feature/crossfade-mvp/docs/VALIDATION.md) for current branch-head checks.
 
 ## Security and remaining release gates
 

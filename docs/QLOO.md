@@ -4,7 +4,7 @@ The server defaults to the existing hackathon host `https://hackathon.api.qloo.c
 
 | Purpose | Request | Documented limit |
 | --- | --- | --- |
-| Resolve a named input | `GET /search?query=…&types=urn:entity:{artist|movie|book}&take=8` | Search `take` 1–100, `page` 1–100 |
+| Resolve a named input | `GET /search?query=…&types=urn:entity:{artist|movie|book}&take=8` (or `take=100` when revalidating a previously selected ID) | Search `take` 1–100, `page` 1–100 |
 | Gather cross-domain candidates | `GET /v2/insights?filter.type=urn:entity:{artist|movie|book}&signal.interests.entities=id,…&feature.explainability=true&take=20&page=1` | Insights `take` 1–50; `page` begins at 1 |
 | Recover a missing eligible domain | Request `page=2` only for an audience whose first result page was full | One bounded recovery round; no hard-rule relaxation |
 | Exclude rejected IDs | Add `filter.exclude.entities=id,…` to Insights | Rechecked locally after response |
@@ -16,6 +16,8 @@ The Insights reference describes optional per-result `query.explainability`, whe
 The public reference documents a movie content-rating filter, but does not guarantee movie runtime in results or establish a runtime unit. A numeric `properties.duration` is **not** accepted as film minutes. A live film can therefore participate in a **conceptual experience** when metadata is missing, but the result states that the film, rating, and total-program gates are not verified. Known violations still exclude candidates. A duration-verified schedule requires independently established minutes and rating; no current live response has met that release gate. Synthetic fixtures use explicitly invented minute values and remain labeled as such. Comparison (`/v2/analysis/compare`) is not used because its public semantics do not establish a calibrated per-candidate fairness measure.
 
 The client caps actual HTTP attempts at 24 across logical calls, including retries, and times out each attempt after 8 seconds. It never follows an HTTP redirect with `X-Api-Key`. Search documents HTTP 429; the client honors short `Retry-After` guidance and returns a rate-limit error rather than waiting through a long delay inside a planning request. No undocumented numeric Qloo rate quota is assumed. The 24-attempt limit is an application safeguard, **not** a published Qloo allowance.
+
+Previously selected IDs are never accepted from the browser alone. A fresh documented Search response of up to 100 matches must still contain the ID under the same exact name and requested top-level type. If it disappears, the user must choose again. This uses the original logical Search call, though it can return a larger response. Search and Insights pages that exceed the requested `take` are rejected, preserving the planner's bounded candidate count. Recognized request aborts stop later source dispatch and cancel Qloo retries; a reserved shared plan quota is never refunded.
 
 `npm run qloo:smoke` is offline by default. With an authorized key supplied through the process environment, `npm run qloo:smoke -- --live-once` performs at most three sequential calls: Search, movie Insights, book Insights. It makes no retry, refuses redirects, caps each response at 2 MB, and reports response structure, nonempty results, and explainability-object counts without printing credentials, IDs, names, or raw payloads. No authenticated smoke run has occurred.
 

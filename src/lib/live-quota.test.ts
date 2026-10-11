@@ -110,3 +110,55 @@ it("rejects a limit that could silently overspend the planned ceiling", async ()
   });
   expect(transport).not.toHaveBeenCalled();
 });
+
+it("models concurrent atomic reservations, exact admission, and window reset offline", async () => {
+  configure();
+  let now = 0;
+  let used = 0;
+  let expires = 0;
+  // Deterministic transport model: one synchronous decision per EVAL call.
+  // This verifies our admission handling; it is not a Redis or Upstash test.
+  const transport = vi
+    .fn<typeof fetch>()
+    .mockImplementation(async (_url, init) => {
+      const command = JSON.parse(String(init?.body));
+      const limit = command[4] as number;
+      if (now >= expires) used = 0;
+      const admitted = used < limit;
+      if (admitted) {
+        used++;
+        if (used === 1) expires = now + 3_600_000;
+      }
+      return Response.json({ result: [admitted ? 1 : 0, used] });
+    });
+  const batch = await Promise.allSettled(
+    Array.from({ length: 7 }, () => reserveLivePlan(transport)),
+  );
+  expect(batch.filter((item) => item.status === "fulfilled")).toHaveLength(2);
+  expect(batch.filter((item) => item.status === "rejected")).toHaveLength(5);
+  expect(used).toBe(2);
+  now = 3_600_000;
+  await reserveLivePlan(transport);
+  expect(used).toBe(1);
+  expect(transport).toHaveBeenCalledTimes(8);
+});
+
+it("fails closed on a provider timeout", async () => {
+  configure();
+  const transport = vi
+    .fn<typeof fetch>()
+    .mockImplementation(async (_url, init) => {
+      await new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener(
+          "abort",
+          () => reject(new DOMException("timed out", "AbortError")),
+          { once: true },
+        );
+      });
+      throw new Error("unreachable");
+    });
+  await expect(reserveLivePlan(transport)).rejects.toMatchObject({
+    code: "QLOO_GUARD_UNAVAILABLE",
+    status: 503,
+  });
+});

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { ZodError } from "zod";
 import { AppError } from "@/lib/errors";
+import { throwIfAborted } from "@/lib/cancellation";
 import { reserveLivePlan } from "@/lib/live-quota";
 import { requestSchema } from "@/lib/model";
 import { runNegotiation } from "@/lib/orchestrator";
@@ -32,7 +33,6 @@ async function limitedBody(request: Request): Promise<string> {
 export async function POST(request: Request) {
   try {
     checkRequestOrigin(request);
-    checkRateLimit("planning-global");
     if (
       !request.headers
         .get("content-type")
@@ -44,9 +44,19 @@ export async function POST(request: Request) {
       throw new AppError("REQUEST_SIZE", "Request is too large.", 413);
     const body = await limitedBody(request);
     const parsed = requestSchema.parse(JSON.parse(body));
+    // Separate process-local emergency brakes. A trusted edge rule must
+    // provide per-source throttling before any public live launch.
+    checkRateLimit(
+      `planning-${parsed.mode}`,
+      Date.now(),
+      parsed.mode === "live" ? 15 : 60,
+    );
+    throwIfAborted(request.signal);
     const source = parsed.mode === "live" ? liveSource() : syntheticSource;
     if (parsed.mode === "live") await reserveLivePlan();
-    const result = await runNegotiation(parsed, source);
+    const result = await runNegotiation(parsed, source, {
+      signal: request.signal,
+    });
     return NextResponse.json(result, {
       headers: { "Cache-Control": "no-store" },
     });

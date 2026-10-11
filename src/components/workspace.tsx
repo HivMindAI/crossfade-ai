@@ -82,6 +82,28 @@ function labelDomain(domain: Domain) {
   return domain === "artist" ? "Music" : domain === "movie" ? "Film" : "Books";
 }
 
+function handleTabKeys(event: React.KeyboardEvent<HTMLDivElement>) {
+  const tabs = Array.from(
+    event.currentTarget.querySelectorAll<HTMLButtonElement>("[role='tab']"),
+  );
+  const current = tabs.indexOf(document.activeElement as HTMLButtonElement);
+  if (current < 0) return;
+  const next =
+    event.key === "ArrowRight"
+      ? (current + 1) % tabs.length
+      : event.key === "ArrowLeft"
+        ? (current - 1 + tabs.length) % tabs.length
+        : event.key === "Home"
+          ? 0
+          : event.key === "End"
+            ? tabs.length - 1
+            : -1;
+  if (next < 0) return;
+  event.preventDefault();
+  tabs[next].focus();
+  tabs[next].click();
+}
+
 export function Workspace() {
   const [input, setInput] = useState<PlanRequest>(defaults);
   const [result, setResult] = useState<PlanResult | null>(null);
@@ -839,12 +861,14 @@ export function Workspace() {
                     className="option-picker"
                     role="tablist"
                     aria-label="Experience alternatives"
+                    onKeyDown={handleTabKeys}
                   >
                     {result.options.map((option, index) => (
                       <button
                         key={option.id}
                         role="tab"
                         aria-selected={selected === index}
+                        tabIndex={selected === index ? 0 : -1}
                         className={selected === index ? "selected" : ""}
                         onClick={() => {
                           setSelected(index);
@@ -897,10 +921,12 @@ export function Workspace() {
                         className="plan-tabs"
                         role="tablist"
                         aria-label="Plan detail"
+                        onKeyDown={handleTabKeys}
                       >
                         <button
                           role="tab"
                           aria-selected={view === "blueprint"}
+                          tabIndex={view === "blueprint" ? 0 : -1}
                           className={view === "blueprint" ? "active" : ""}
                           onClick={() => setView("blueprint")}
                         >
@@ -909,6 +935,7 @@ export function Workspace() {
                         <button
                           role="tab"
                           aria-selected={view === "evidence"}
+                          tabIndex={view === "evidence" ? 0 : -1}
                           className={view === "evidence" ? "active" : ""}
                           onClick={() => setView("evidence")}
                         >
@@ -917,6 +944,7 @@ export function Workspace() {
                         <button
                           role="tab"
                           aria-selected={view === "trace"}
+                          tabIndex={view === "trace" ? 0 : -1}
                           className={view === "trace" ? "active" : ""}
                           onClick={() => setView("trace")}
                         >

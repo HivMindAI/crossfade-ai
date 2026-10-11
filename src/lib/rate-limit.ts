@@ -43,7 +43,11 @@ export function checkRequestOrigin(
   }
 }
 
-export function checkRateLimit(identity: string, now = Date.now()): void {
+export function checkRateLimit(
+  identity: string,
+  now = Date.now(),
+  limit = 15,
+): void {
   if (windows.size > 3000) {
     for (const [key, value] of windows)
       if (value.reset < now) windows.delete(key);
@@ -55,7 +59,7 @@ export function checkRateLimit(identity: string, now = Date.now()): void {
       : previous;
   window.count++;
   windows.set(identity, window);
-  if (window.count > 15)
+  if (window.count > limit)
     throw new AppError(
       "RATE_LIMIT",
       "Too many planning requests. Try again in a minute.",

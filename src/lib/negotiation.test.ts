@@ -214,6 +214,39 @@ describe("negotiation", () => {
     );
   });
 
+  it("revalidates a selected ID beyond the first eight across replanning", async () => {
+    const next = clone();
+    next.audiences[0].interests[0].id = "syn-seed-miles";
+    const takes: number[] = [];
+    const source: CulturalSource = {
+      ...syntheticSource,
+      async search(name, domain, options) {
+        if (name !== "Miles Davis") return syntheticSource.search(name, domain);
+        takes.push(options?.take ?? 0);
+        return [
+          ...Array.from({ length: 11 }, (_, i) => ({
+            id: `other-${i}`,
+            name,
+            domain,
+          })),
+          { id: "syn-seed-miles", name, domain },
+        ];
+      },
+    };
+    const first = await runNegotiation(next, source);
+    expect(first.status).toBe("ready");
+    next.constraints.excludedIds.push(first.options[0].candidates[1].entity.id);
+    const second = await runNegotiation(next, source);
+    expect(second.resolved[0][0].id).toBe("syn-seed-miles");
+    expect(takes).toEqual([100, 100]);
+    expect(
+      second.options.every(
+        (option) =>
+          option.candidates[1].entity.id !== next.constraints.excludedIds[0],
+      ),
+    ).toBe(true);
+  });
+
   it("ranks deterministically across repeat runs", async () => {
     const first = await runNegotiation(clone(), syntheticSource);
     const second = await runNegotiation(clone(), syntheticSource);

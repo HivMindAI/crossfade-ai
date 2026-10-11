@@ -1,5 +1,32 @@
 import { expect, test } from "@playwright/test";
 
+test("supports arrow, Home, and End keys in result tabs", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Find the shared ground" }).click();
+  const fairness = page.getByRole("tab", { name: /Fairness first/ });
+  await fairness.focus();
+  await fairness.press("ArrowRight");
+  await expect(
+    page.getByRole("tab", { name: /Favors The improvisers/ }),
+  ).toHaveAttribute("aria-selected", "true");
+  await page.keyboard.press("End");
+  await expect(
+    page.getByRole("tab", { name: /Favors The shapeshifters/ }),
+  ).toHaveAttribute("aria-selected", "true");
+  await page.keyboard.press("Home");
+  await expect(fairness).toHaveAttribute("aria-selected", "true");
+  const blueprint = page.getByRole("tab", { name: "Blueprint" });
+  await blueprint.focus();
+  await blueprint.press("ArrowRight");
+  await expect(page.getByRole("tab", { name: "Evidence" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(
+    page.getByText("Synthetic fixture evidence").first(),
+  ).toBeVisible();
+});
+
 test("synthetic negotiation, evidence, and live repair", async ({ page }) => {
   await page.goto("/");
   await expect(

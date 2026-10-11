@@ -8,6 +8,23 @@ const transport = (
 ) => vi.fn(handler) as unknown as typeof fetch;
 
 describe("Qloo client", () => {
+  it("rejects pages larger than the requested Search or Insights size", async () => {
+    const items = Array.from({ length: 2 }, (_, index) => ({
+      entity_id: `id-${index}`,
+      name: `Result ${index}`,
+      type: "urn:entity:artist",
+    }));
+    const client = new QlooClient(
+      "offline-test-key",
+      transport(async () => envelope(items)),
+    );
+    await expect(
+      client.search("Result", "artist", { take: 1 }),
+    ).rejects.toMatchObject({ code: "QLOO_MALFORMED" });
+    await expect(
+      client.insights("artist", ["seed"], [], { take: 1, page: 1 }),
+    ).rejects.toMatchObject({ code: "QLOO_MALFORMED" });
+  });
   it("accepts only the two Qloo API hosts before sending a key", async () => {
     const calls: URL[] = [];
     const fetcher = transport(async (url) => {

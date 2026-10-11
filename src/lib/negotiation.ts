@@ -92,14 +92,6 @@ export function buildCandidates(
   return result;
 }
 
-function dominates(a: Blueprint, b: Blueprint): boolean {
-  return (
-    a.balance[0] <= b.balance[0] &&
-    a.balance[1] <= b.balance[1] &&
-    (a.balance[0] < b.balance[0] || a.balance[1] < b.balance[1])
-  );
-}
-
 function compareFairness(a: Blueprint, b: Blueprint): number {
   return (
     Math.max(...a.balance) - Math.max(...b.balance) ||
@@ -117,9 +109,12 @@ export function negotiate(
   const eligible = buildCandidates(matrix, request);
   if (DOMAINS.some((domain) => eligible[domain].length === 0)) return [];
   const combinations: Blueprint[] = [];
-  for (const artist of eligible.artist.slice(0, 12)) {
-    for (const movie of eligible.movie.slice(0, 12)) {
-      for (const book of eligible.book.slice(0, 12)) {
+  // At most 40 entities per domain (two 20-result pages), or 64,000 tuples.
+  // A top-k cut by worst individual rank is unsafe: an extreme trade-off can
+  // have a poor rank for one audience and still be globally non-dominated.
+  for (const artist of eligible.artist) {
+    for (const movie of eligible.movie) {
+      for (const book of eligible.book) {
         const picks = [artist, movie, book];
         const unverified: Blueprint["unverified"] = [];
         if (movie.entity.duration === undefined) unverified.push("runtime");
@@ -155,9 +150,24 @@ export function negotiate(
   )
     ? combinations.filter((item) => item.scheduleStatus === "duration-verified")
     : combinations;
-  const frontier = pool.filter(
-    (candidate) => !pool.some((other) => dominates(other, candidate)),
+  // In two dimensions, sort by A (then B). A point is non-dominated exactly
+  // when its B rank is strictly better than every previously seen point.
+  // Equal balance points are interchangeable for this ordinal objective; keep
+  // the lexicographically first ID as a deterministic representative.
+  pool.sort(
+    (a, b) =>
+      a.balance[0] - b.balance[0] ||
+      a.balance[1] - b.balance[1] ||
+      a.id.localeCompare(b.id),
   );
+  const frontier: Blueprint[] = [];
+  let bestB = Infinity;
+  for (const option of pool) {
+    if (option.balance[1] < bestB) {
+      frontier.push(option);
+      bestB = option.balance[1];
+    }
+  }
   frontier.sort(compareFairness);
   const fair = frontier[0];
   const selected = [fair];

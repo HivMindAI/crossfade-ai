@@ -1,6 +1,7 @@
 import "server-only";
 import { z } from "zod";
 import { AppError } from "./errors";
+import { cancellableWait, throwIfAborted } from "./cancellation";
 import {
   entityType,
   type CulturalSource,
@@ -139,8 +140,10 @@ export class QlooClient implements CulturalSource {
     private transport: typeof fetch = fetch,
     private maxAttempts = 24,
     private timeoutMs = 8000,
-    private wait: (ms: number) => Promise<void> = (ms) =>
-      new Promise((resolve) => setTimeout(resolve, ms)),
+    private wait: (
+      ms: number,
+      signal?: AbortSignal,
+    ) => Promise<void> = cancellableWait,
     origin = DEFAULT_ORIGIN,
   ) {
     if (!key.trim())
@@ -156,19 +159,28 @@ export class QlooClient implements CulturalSource {
     return { httpAttempts: this.attempts };
   }
 
-  private async get(path: string, params: URLSearchParams, allow404 = false) {
+  private async get(
+    path: string,
+    params: URLSearchParams,
+    allow404 = false,
+    signal?: AbortSignal,
+  ) {
     const url = new URL(path, this.origin);
     url.search = params.toString();
     for (let attempt = 0; attempt < 3; attempt++) {
+      throwIfAborted(signal);
       if (this.attempts >= this.maxAttempts)
         throw new AppError("BUDGET", "Qloo HTTP attempt budget exceeded.", 429);
       this.attempts++;
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+      const requestSignal = signal
+        ? AbortSignal.any([signal, controller.signal])
+        : controller.signal;
       try {
         const response = await this.transport(url, {
           headers: { "X-Api-Key": this.key, Accept: "application/json" },
-          signal: controller.signal,
+          signal: requestSignal,
           cache: "no-store",
           redirect: "manual",
         });
@@ -198,7 +210,8 @@ export class QlooClient implements CulturalSource {
               429,
             );
           if (attempt < 2 && delay <= 1000) {
-            await this.wait(delay);
+            await this.wait(delay, signal);
+            throwIfAborted(signal);
             continue;
           }
           throw new AppError(
@@ -220,6 +233,7 @@ export class QlooClient implements CulturalSource {
             502,
           );
         const body = await limitedResponseText(response);
+        throwIfAborted(signal);
         let parsed: unknown;
         try {
           parsed = JSON.parse(body);
@@ -245,6 +259,7 @@ export class QlooClient implements CulturalSource {
           );
         return result.data;
       } catch (error) {
+        throwIfAborted(signal);
         if (error instanceof AppError) throw error;
         if (controller.signal.aborted)
           throw new AppError(
@@ -260,7 +275,8 @@ export class QlooClient implements CulturalSource {
           );
         if (attempt === 2)
           throw new AppError("QLOO_NETWORK", "Could not reach Qloo.", 503);
-        await this.wait(200 * (attempt + 1));
+        await this.wait(200 * (attempt + 1), signal);
+        throwIfAborted(signal);
       } finally {
         clearTimeout(timer);
       }
@@ -268,13 +284,26 @@ export class QlooClient implements CulturalSource {
     throw new AppError("QLOO_UPSTREAM", "Qloo is unavailable.", 503);
   }
 
-  async search(name: string, domain: Domain): Promise<SearchMatch[]> {
+  async search(
+    name: string,
+    domain: Domain,
+    options: { take?: number; signal?: AbortSignal } = {},
+  ): Promise<SearchMatch[]> {
+    const take = options.take ?? 8;
+    if (!Number.isInteger(take) || take < 1 || take > 100)
+      throw new AppError("INVALID_QUERY", "Invalid Qloo Search size.", 400);
     const params = new URLSearchParams({
       query: name,
       types: entityType(domain),
-      take: "8",
+      take: String(take),
     });
-    const response = await this.get("/search", params, true);
+    const response = await this.get("/search", params, true, options.signal);
+    if (response.results.entities.length > take)
+      throw new AppError(
+        "QLOO_MALFORMED",
+        "Qloo returned more Search results than requested.",
+        502,
+      );
     const seen = new Set<string>();
     return response.results.entities
       .filter((item) => {
@@ -291,6 +320,7 @@ export class QlooClient implements CulturalSource {
     signalIds: string[],
     excludedIds: string[],
     options: InsightOptions = { take: 20, page: 1 },
+    signal?: AbortSignal,
   ): Promise<EvidenceSet> {
     if (signalIds.length === 0)
       return { entities: [], signalIds, source: "qloo", ...options };
@@ -312,7 +342,13 @@ export class QlooClient implements CulturalSource {
     });
     if (excludedIds.length)
       params.set("filter.exclude.entities", excludedIds.join(","));
-    const response = await this.get("/v2/insights", params);
+    const response = await this.get("/v2/insights", params, false, signal);
+    if (response.results.entities.length > options.take)
+      throw new AppError(
+        "QLOO_MALFORMED",
+        "Qloo returned more Insights results than requested.",
+        502,
+      );
     const entities: Entity[] = response.results.entities
       .filter((item) => !excludedIds.includes(item.entity_id))
       .map((item) => {

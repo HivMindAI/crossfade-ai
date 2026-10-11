@@ -50,12 +50,17 @@ export type EvidenceSet = {
   take?: number;
 };
 export type CulturalSource = {
-  search(name: string, domain: Domain): Promise<SearchMatch[]>;
+  search(
+    name: string,
+    domain: Domain,
+    options?: { take?: number; signal?: AbortSignal },
+  ): Promise<SearchMatch[]>;
   insights(
     domain: Domain,
     signalIds: string[],
     excludedIds: string[],
     options?: InsightOptions,
+    signal?: AbortSignal,
   ): Promise<EvidenceSet>;
   metrics?(): { httpAttempts: number };
 };

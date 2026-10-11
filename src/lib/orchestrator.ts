@@ -1,4 +1,5 @@
 import { AppError } from "./errors";
+import { throwIfAborted } from "./cancellation";
 import {
   DOMAINS,
   type Action,
@@ -19,12 +20,14 @@ async function mapBounded<T, U>(
   items: T[],
   limit: number,
   task: (item: T, index: number) => Promise<U>,
+  signal?: AbortSignal,
 ): Promise<U[]> {
   const results = new Array<U>(items.length);
   let next = 0;
   await Promise.all(
     Array.from({ length: Math.min(limit, items.length) }, async () => {
       while (next < items.length) {
+        throwIfAborted(signal);
         const index = next++;
         results[index] = await task(items[index], index);
       }
@@ -104,11 +107,17 @@ function appendPage(first: EvidenceSet, second: EvidenceSet): EvidenceSet {
 export async function runNegotiation(
   request: PlanRequest,
   source: CulturalSource,
-  settings: { maxSourceCalls?: number; concurrency?: number } = {},
+  settings: {
+    maxSourceCalls?: number;
+    concurrency?: number;
+    signal?: AbortSignal;
+  } = {},
 ): Promise<PlanResult> {
   const startedAt = performance.now();
   const maxCalls = settings.maxSourceCalls ?? MAX_SOURCE_CALLS;
   const concurrency = settings.concurrency ?? CONCURRENCY;
+  const signal = settings.signal;
+  throwIfAborted(signal);
   const audit: Action[] = [
     {
       step: "PLAN",
@@ -124,6 +133,7 @@ export async function runNegotiation(
   let calls = 0;
   let recoveryCalls = 0;
   const reserve = () => {
+    throwIfAborted(signal);
     if (calls >= maxCalls)
       throw new AppError("BUDGET", "The source-call budget is exhausted.", 429);
     calls++;
@@ -146,9 +156,16 @@ export async function runNegotiation(
     concurrency,
     async ({ interest }) => {
       reserve();
-      return source.search(interest.name, interest.type);
+      // Search is a documented endpoint with take <= 100. Recheck a selected
+      // ID against returned name and type even if its result order changed.
+      return source.search(interest.name, interest.type, {
+        take: interest.id ? 100 : 8,
+        signal,
+      });
     },
+    signal,
   );
+  throwIfAborted(signal);
   const resolved: [SearchMatch[], SearchMatch[]] = [[], []];
   interests.forEach(({ side, interest }, index) => {
     const matches = searchResults[index];
@@ -179,9 +196,12 @@ export async function runNegotiation(
         resolved[side].map((match) => match.id),
         request.constraints.excludedIds,
         { take: INITIAL_TAKE, page: 1 },
+        signal,
       );
     },
+    signal,
   );
+  throwIfAborted(signal);
   const matrix = {} as EvidenceMatrix;
   DOMAINS.forEach((domain, index) => {
     matrix[domain] = [sets[index * 2], sets[index * 2 + 1]];
@@ -215,16 +235,23 @@ export async function runNegotiation(
       step: "REPLAN",
       detail: `${failure} Select page two for ${sides.map((side) => `audience ${side === 0 ? "A" : "B"}`).join(" and ")} at take=${INITIAL_TAKE}; keep every hard rule.`,
     });
-    const pages = await mapBounded(sides, concurrency, async (side) => {
-      reserve();
-      recoveryCalls++;
-      return source.insights(
-        domain,
-        resolved[side].map((match) => match.id),
-        request.constraints.excludedIds,
-        { take: INITIAL_TAKE, page: 2 },
-      );
-    });
+    const pages = await mapBounded(
+      sides,
+      concurrency,
+      async (side) => {
+        reserve();
+        recoveryCalls++;
+        return source.insights(
+          domain,
+          resolved[side].map((match) => match.id),
+          request.constraints.excludedIds,
+          { take: INITIAL_TAKE, page: 2 },
+          signal,
+        );
+      },
+      signal,
+    );
+    throwIfAborted(signal);
     sides.forEach((side, index) => {
       matrix[domain][side] = appendPage(matrix[domain][side], pages[index]);
     });
@@ -242,6 +269,7 @@ export async function runNegotiation(
     detail: `Intersect stable entity IDs; eligible shared candidates: ${DOMAINS.map((domain) => `${domain} ${sharedEligible[domain]}`).join(", ")}. Compare within-request ranks and retain non-dominated ordinal trade-offs.`,
   });
   const options = negotiate(matrix, request);
+  throwIfAborted(signal);
   const gaps = DOMAINS.filter((domain) => eligible[domain].length === 0).map(
     (domain) => reason(domain, matrix, request),
   );

@@ -24,6 +24,7 @@ import {
   type PlanResult,
 } from "@/lib/model";
 import { syntheticCatalog } from "@/lib/synthetic";
+import { parsePlanResponse } from "@/lib/plan-response";
 
 const defaults: PlanRequest = {
   mode: "synthetic",
@@ -136,7 +137,18 @@ export function Workspace() {
     setReplacements([]);
   }
 
-  async function generate(next: PlanRequest, previous?: Blueprint) {
+  async function generate(
+    next: PlanRequest,
+    previous?: Blueprint,
+    rejectedId?: string,
+  ) {
+    const rejected = previous?.candidates.find(
+      (item) => item.entity.id === rejectedId,
+    );
+    const failureMessage = (message: string) =>
+      rejected
+        ? `Replanning after rejecting “${rejected.entity.name}” failed. ${message} The rejection remains active.`
+        : message;
     const version = inputVersion.current;
     requestController.current?.abort();
     const controller = new AbortController();
@@ -154,21 +166,50 @@ export function Workspace() {
         body: JSON.stringify(next),
         signal: controller.signal,
       });
-      const body = await response.json();
+      const payload = await response.json();
       if (controller.signal.aborted || version !== inputVersion.current) return;
       if (!response.ok) {
-        if (body.error === "AMBIGUOUS_ENTITY" && body.details?.matches?.length)
-          setDisambiguation(body.details);
-        setError(body.message || "Planning failed. Please try again.");
+        if (
+          payload?.error === "AMBIGUOUS_ENTITY" &&
+          payload.details?.matches?.length
+        )
+          setDisambiguation(payload.details);
+        setError(
+          failureMessage(
+            typeof payload?.message === "string"
+              ? payload.message
+              : "Planning failed. Please try again.",
+          ),
+        );
         return;
       }
-      setResult(body as PlanResult);
+      const body = parsePlanResponse(payload, next);
+      if (!body) {
+        setError(
+          failureMessage(
+            "The planner returned an invalid or inconsistent result. Please retry.",
+          ),
+        );
+        return;
+      }
+      setResult(body);
       setSelected(0);
       setView("blueprint");
       if (body.status === "no-solution") {
-        setReplacements([]);
+        const partial =
+          rejected &&
+          body.diagnostics.find(
+            (item) => item.domain === rejected.entity.domain,
+          )?.partial[0];
+        setReplacements(
+          rejected
+            ? [
+                `Rejected ${rejected.entity.name} (${rejected.entity.id}). ${partial ? `Partial alternative: ${partial.entity.name} (${partial.entity.id}); not selected as a complete replacement because another domain blocks the plan.` : "No eligible replacement was observed in the retrieved pool."} Status: unresolved; no complete plan.`,
+              ]
+            : [],
+        );
         setNotice(
-          "The plan is incomplete. Review the evidence gaps and decision trace.",
+          "The retrieved evidence cannot complete this plan under the current rules. Review the domain diagnostics and next actions.",
         );
       } else if (previous && body.options?.[0]) {
         const changes = previous.candidates.flatMap((candidate, index) =>
@@ -178,7 +219,25 @@ export function Workspace() {
               ]
             : [],
         );
-        setReplacements(changes);
+        const replacement =
+          rejected &&
+          body.options[0].candidates.find(
+            (item: Blueprint["candidates"][number]) =>
+              item.entity.domain === rejected.entity.domain,
+          );
+        setReplacements([
+          ...(rejected
+            ? [
+                `Rejected ${rejected.entity.name} (${rejected.entity.id}) → ${replacement ? `${replacement.entity.name} (${replacement.entity.id})` : "no replacement"}. Status: ${body.status === "ready" ? "duration-verified complete path" : "conceptual path"}.`,
+              ]
+            : []),
+          ...changes,
+          ...(replacement
+            ? [
+                `Replacement evidence: ${replacement.source === "qloo" ? "Qloo" : "synthetic"} positions #${replacement.ranks[0]} / #${replacement.ranks[1]}; ${replacement.receipt.checked.join("; ")}. Unverified: ${replacement.receipt.unverified.join("; ") || "none for this component"}`,
+              ]
+            : []),
+        ]);
         setNotice(
           changes.length
             ? `The rejected component was excluded and both audiences were reevaluated. ${changes.length} component${changes.length === 1 ? "" : "s"} changed; compare the replacements below.`
@@ -202,7 +261,9 @@ export function Workspace() {
     } catch {
       if (controller.signal.aborted || version !== inputVersion.current) return;
       setError(
-        "Could not reach the planner. Check your connection and try again.",
+        failureMessage(
+          "Could not obtain a usable planner response. Check your connection and try again.",
+        ),
       );
     } finally {
       if (requestController.current === controller) {
@@ -261,7 +322,7 @@ export function Workspace() {
       ...new Set([...next.constraints.excludedIds, id]),
     ];
     setInput(next);
-    void generate(next, previous);
+    void generate(next, previous, id);
   }
   function changeMode(mode: PlanRequest["mode"]) {
     markDirty();
@@ -816,12 +877,85 @@ export function Workspace() {
               )}
               {result.status === "no-solution" ? (
                 <div className="no-solution">
-                  <h3>No honest bridge under these rules.</h3>
+                  <h3>No complete path in the retrieved evidence.</h3>
                   <p>
-                    A required component lacks shared, verifiable evidence.
-                    Review the specific gaps before revising an input. Hard
-                    constraints were not relaxed.
+                    This result describes the current candidate pool, not all
+                    possible cultural agreements. Review what each domain
+                    supports before revising an input. Hard constraints were not
+                    relaxed.
                   </p>
+                  {result.diagnostics && (
+                    <div
+                      className="diagnostic-grid"
+                      aria-label="Domain evidence and next actions"
+                    >
+                      {result.diagnostics.map((item) => (
+                        <article className="diagnostic-card" key={item.domain}>
+                          <h4>
+                            {labelDomain(item.domain)} ·{" "}
+                            {item.eligible
+                              ? `${item.eligible} eligible shared`
+                              : "blocks the full plan"}
+                          </h4>
+                          <p>
+                            Returned for {input.audiences[0].name}:{" "}
+                            {item.returned[0]}; {input.audiences[1].name}:{" "}
+                            {item.returned[1]}. Shared IDs: {item.shared}.
+                            Recovery: {item.recovery.replaceAll("-", " ")}.
+                          </p>
+                          <p>
+                            Retrieval A / B:{" "}
+                            {item.retrieval
+                              .map((status) => status.replaceAll("-", " "))
+                              .join(" / ")}
+                            . These bounded pages do not establish exhaustive
+                            coverage or explain an empty list.
+                          </p>
+                          {Object.entries(item.issues).length > 0 && (
+                            <p>
+                              Observed blockers:{" "}
+                              {Object.entries(item.issues)
+                                .map(
+                                  ([name, count]) =>
+                                    `${name.replaceAll("-", " ")} (${count})`,
+                                )
+                                .join(", ")}
+                              .
+                            </p>
+                          )}
+                          {item.partial.length > 0 && (
+                            <div>
+                              <strong>
+                                Partial evidence only · not a complete schedule
+                              </strong>
+                              <ul>
+                                {item.partial.map((candidate) => (
+                                  <li key={candidate.entity.id}>
+                                    {candidate.entity.name} (
+                                    {candidate.entity.id}) ·{" "}
+                                    {candidate.source === "qloo"
+                                      ? "Qloo"
+                                      : "synthetic fixture"}{" "}
+                                    · #{candidate.ranks[0]} / #
+                                    {candidate.ranks[1]}. Checked:{" "}
+                                    {candidate.receipt.checked.join("; ")}.
+                                    Unverified:{" "}
+                                    {candidate.receipt.unverified.join("; ") ||
+                                      "none for this component"}
+                                    . Limitations:{" "}
+                                    {candidate.receipt.limitations.join("; ")}.
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+                          <p>
+                            <strong>Next:</strong> {item.nextAction}
+                          </p>
+                        </article>
+                      ))}
+                    </div>
+                  )}
                   <ul>
                     {result.gaps.map((gap) => (
                       <li key={gap}>{gap}</li>
@@ -1010,24 +1144,27 @@ export function Workspace() {
                                 <strong>{candidate.entity.name}</strong>
                                 <span
                                   className={
-                                    result.mode === "synthetic"
+                                    candidate.source === "synthetic"
                                       ? "tag-synthetic"
                                       : "tag-live"
                                   }
                                 >
-                                  {result.mode === "synthetic"
+                                  {candidate.source === "synthetic"
                                     ? "SYNTHETIC FIXTURE"
                                     : "QLOO RESULT"}
                                 </span>
                               </div>
+                              <p>
+                                Entity ID: <code>{candidate.entity.id}</code>
+                              </p>
                               <p>{candidate.explanation}</p>
                               <strong className="evidence-label">
-                                {result.mode === "synthetic"
+                                {candidate.source === "synthetic"
                                   ? "Synthetic fixture evidence"
                                   : "Qloo-returned evidence"}
                               </strong>
                               <p>
-                                {result.mode === "synthetic"
+                                {candidate.source === "synthetic"
                                   ? "Invented development fixture. No Qloo evidence is claimed."
                                   : "This entity appeared in both audience-specific Qloo result sets by the same ID."}
                               </p>
@@ -1083,13 +1220,17 @@ export function Workspace() {
                                 Hard constraints and missing evidence
                               </strong>
                               <p>
-                                {candidate.entity.domain === "movie"
-                                  ? active?.scheduleStatus ===
-                                    "duration-verified"
-                                    ? `Film metadata passed the ${input.constraints.maxMovieMinutes}-minute film limit, ${input.constraints.maxProgramMinutes ?? 180}-minute total program limit, and allowed rating set.`
-                                    : `Conceptual only. Unverified: ${active?.unverified.join(" and ")}. Known metadata do not violate the selected limits, but missing values have not passed the hard gates.`
-                                  : "This component passed explicit rejection checks."}{" "}
-                                Rights and availability remain unverified.
+                                Checked: {candidate.receipt.checked.join("; ")}.
+                              </p>
+                              <p>
+                                Unverified:{" "}
+                                {candidate.receipt.unverified.join("; ") ||
+                                  "No component-specific condition; full plan rules apply"}
+                                .
+                              </p>
+                              <p>
+                                Limitations:{" "}
+                                {candidate.receipt.limitations.join("; ")}.
                               </p>
                               <strong className="evidence-label">
                                 Creative interpretation
@@ -1099,7 +1240,7 @@ export function Workspace() {
                                 not a Qloo claim.
                               </p>
                               <small>
-                                {result.mode === "synthetic"
+                                {candidate.source === "synthetic"
                                   ? "These invented fixtures contain no Qloo explainability metadata."
                                   : (candidate.entity.evidenceWarning ??
                                     (candidate.entity.explainability ===

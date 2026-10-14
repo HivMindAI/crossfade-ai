@@ -5,12 +5,19 @@ import {
   type Action,
   type CulturalSource,
   type Domain,
+  type DomainDiagnostic,
   type EvidenceSet,
   type PlanRequest,
   type PlanResult,
+  type RetrievalStatus,
   type SearchMatch,
 } from "./model";
-import { buildCandidates, negotiate, type EvidenceMatrix } from "./negotiation";
+import {
+  buildCandidates,
+  inspectDomain,
+  negotiate,
+  type EvidenceMatrix,
+} from "./negotiation";
 
 const INITIAL_TAKE = 20;
 const MAX_SOURCE_CALLS = 16;
@@ -24,15 +31,23 @@ async function mapBounded<T, U>(
 ): Promise<U[]> {
   const results = new Array<U>(items.length);
   let next = 0;
+  let failed = false;
+  let failure: unknown;
   await Promise.all(
     Array.from({ length: Math.min(limit, items.length) }, async () => {
-      while (next < items.length) {
-        throwIfAborted(signal);
-        const index = next++;
-        results[index] = await task(items[index], index);
+      while (!failed && next < items.length) {
+        try {
+          throwIfAborted(signal);
+          const index = next++;
+          results[index] = await task(items[index], index);
+        } catch (error) {
+          if (!failed) failure = error;
+          failed = true;
+        }
       }
     }),
   );
+  if (failed) throw failure;
   return results;
 }
 
@@ -41,65 +56,49 @@ function reason(
   matrix: EvidenceMatrix,
   request: PlanRequest,
 ): string {
-  const [a, b] = matrix[domain];
-  if (!a.entities.length || !b.entities.length)
-    return `${domain}: at least one audience returned no recommendations.`;
-  const bIds = new Set(b.entities.map((entity) => entity.id));
-  const shared = a.entities.filter((entity) => bIds.has(entity.id));
-  if (!shared.length)
+  const { issues } = inspectDomain(domain, matrix[domain], request);
+  if (issues["no-source-results"])
+    return `${domain}: an empty result list was observed for at least one audience. The cause is not established; filters, exclusions, or limited provider evidence may contribute.`;
+  if (issues["no-shared-ids"])
     return `${domain}: the audiences have no shared entity IDs in the gathered results.`;
-  if (
-    shared.every((entity) =>
-      request.constraints.excludedIds.includes(entity.id),
-    )
-  )
+  if (issues.excluded && Object.keys(issues).length === 1)
     return `${domain}: every shared entity was explicitly rejected.`;
-  if (domain === "movie") {
-    const available = shared.filter(
-      (entity) => !request.constraints.excludedIds.includes(entity.id),
+  return `${domain}: shared entities in the retrieved pool were excluded or failed known metadata, film, total-time, or rating rules.`;
+}
+
+function nextAction(diagnostic: DomainDiagnostic): string {
+  const issues = diagnostic.issues;
+  if (diagnostic.eligible)
+    return "This domain has usable shared evidence in this run. Review these receipts while resolving blocked domains; a new run retrieves evidence again.";
+  if (diagnostic.recovery === "budget-limited")
+    return "The built-in retrieval cap prevented page two. Revise a named interest, or have engineering review the call budget before another authorized attempt; no extra request was sent.";
+  if (issues["no-source-results"])
+    return "Review the interests and any exclusions, then retry if appropriate. Search resolved, but the observed empty Insights list does not establish the cause or rule out agreement elsewhere.";
+  if (issues["no-shared-ids"])
+    return "Try different named interests for one audience. No shared ID was found in the retrieved pool; this does not rule out overlap elsewhere.";
+  if (issues.excluded && Object.keys(issues).length === 1)
+    return "Review prior rejections if appropriate, or change an interest. Rejected IDs remain excluded until you clear them.";
+  const actions: string[] = [];
+  if (issues.excluded) actions.push("Review prior rejections if appropriate");
+  if (issues["metadata-conflict"] || issues["invalid-runtime"])
+    actions.push("verify conflicting or invalid film metadata independently");
+  if (issues["film-limit"] || issues["program-limit"] || issues.rating)
+    actions.push(
+      "review the stated film, total-program, and rating limits or change an interest",
     );
-    const bById = new Map(b.entities.map((entity) => [entity.id, entity]));
-    if (
-      available.every((entity) => {
-        const other = bById.get(entity.id)!;
-        return (
-          (entity.duration &&
-            other.duration &&
-            entity.duration !== other.duration) ||
-          (entity.contentRating &&
-            other.contentRating &&
-            entity.contentRating !== other.contentRating) ||
-          (entity.duration !== undefined &&
-            entity.duration > request.constraints.maxMovieMinutes) ||
-          (other.duration !== undefined &&
-            other.duration > request.constraints.maxMovieMinutes) ||
-          (entity.contentRating !== undefined &&
-            !request.constraints.allowedRatings.includes(
-              entity.contentRating as PlanRequest["constraints"]["allowedRatings"][number],
-            )) ||
-          (other.contentRating !== undefined &&
-            !request.constraints.allowedRatings.includes(
-              other.contentRating as PlanRequest["constraints"]["allowedRatings"][number],
-            ))
-        );
-      })
-    )
-      return "movie: every non-rejected shared film conflicts on metadata or violates a known film or rating rule.";
-  }
-  return `${domain}: shared entities fail a hard film, total-time, or exclusion rule.`;
+  return `${actions.join("; ") || "Revise an interest or inspect the retrieved evidence"}. No limit was relaxed automatically.`;
 }
 
 function appendPage(first: EvidenceSet, second: EvidenceSet): EvidenceSet {
-  const seen = new Set(first.entities.map((entity) => entity.id));
   return {
     ...first,
     entities: [
       ...first.entities,
-      ...second.entities.filter((entity) => {
-        if (seen.has(entity.id)) return false;
-        seen.add(entity.id);
-        return true;
-      }),
+      ...second.entities.map((entity, index) => ({
+        ...entity,
+        retrievedRank:
+          ((second.page ?? 2) - 1) * (second.take ?? INITIAL_TAKE) + index + 1,
+      })),
     ],
   };
 }
@@ -111,6 +110,7 @@ export async function runNegotiation(
     maxSourceCalls?: number;
     concurrency?: number;
     signal?: AbortSignal;
+    onEvidence?: (matrix: EvidenceMatrix) => void;
   } = {},
 ): Promise<PlanResult> {
   const startedAt = performance.now();
@@ -211,23 +211,42 @@ export async function runNegotiation(
     detail: `${calls} source calls completed. Six Insights requests were scheduled with bounded concurrency.`,
   });
   let eligible = buildCandidates(matrix, request);
+  const recovery = Object.fromEntries(
+    DOMAINS.map((domain) => [domain, "not-needed"]),
+  ) as Record<Domain, DomainDiagnostic["recovery"]>;
+  const retrieval = Object.fromEntries(
+    DOMAINS.map((domain) => [
+      domain,
+      matrix[domain].map((set): RetrievalStatus =>
+        set.entities.length >= INITIAL_TAKE
+          ? "full-page-unexpanded"
+          : "short-page",
+      ),
+    ]),
+  ) as Record<Domain, [RetrievalStatus, RetrievalStatus]>;
   const missing = DOMAINS.filter((domain) => eligible[domain].length === 0);
   for (const domain of missing) {
     const failure = reason(domain, matrix, request);
-    const sides = [0, 1].filter(
-      (side) => matrix[domain][side].entities.length >= INITIAL_TAKE,
-    );
+    const sides = matrix[domain].every((set) => set.entities.length > 0)
+      ? [0, 1].filter(
+          (side) => matrix[domain][side].entities.length >= INITIAL_TAKE,
+        )
+      : [];
     if (!sides.length) {
+      recovery[domain] = matrix[domain].some((set) => !set.entities.length)
+        ? "empty-side"
+        : "no-full-page";
       audit.push({
         step: "REPLAN",
-        detail: `${failure} No full result page remains to expand; ask the user to revise inputs or supply verified metadata. Hard rules stay intact.`,
+        detail: `${failure} Page two was not selected: a required side was empty or neither side returned a full page. Retrieval is bounded, not exhaustive; ask the user to revise inputs or supply verified metadata. Hard rules stay intact.`,
       });
       continue;
     }
     if (calls + sides.length > maxCalls) {
+      recovery[domain] = "budget-limited";
       audit.push({
         step: "REPLAN",
-        detail: `${failure} Page-two recovery skipped because the source-call budget is exhausted. Hard rules stay intact.`,
+        detail: `${failure} Page-two recovery skipped because the remaining source-call budget cannot cover it. Hard rules stay intact.`,
       });
       continue;
     }
@@ -251,9 +270,15 @@ export async function runNegotiation(
       },
       signal,
     );
+    recovery[domain] = "attempted";
     throwIfAborted(signal);
     sides.forEach((side, index) => {
-      matrix[domain][side] = appendPage(matrix[domain][side], pages[index]);
+      const page = { ...pages[index], page: 2, take: INITIAL_TAKE };
+      retrieval[domain][side] =
+        page.entities.length >= INITIAL_TAKE
+          ? "page-limit-reached"
+          : "short-page";
+      matrix[domain][side] = appendPage(matrix[domain][side], page);
     });
     eligible = buildCandidates(matrix, request);
     audit.push({
@@ -264,6 +289,26 @@ export async function runNegotiation(
   const sharedEligible = Object.fromEntries(
     DOMAINS.map((domain) => [domain, eligible[domain].length]),
   ) as Record<Domain, number>;
+  settings.onEvidence?.(structuredClone(matrix));
+  const diagnostics: DomainDiagnostic[] = DOMAINS.map((domain) => {
+    const assessed = inspectDomain(domain, matrix[domain], request);
+    const diagnostic: DomainDiagnostic = {
+      domain,
+      returned: [
+        matrix[domain][0].entities.length,
+        matrix[domain][1].entities.length,
+      ],
+      shared: assessed.shared,
+      eligible: assessed.candidates.length,
+      issues: assessed.issues,
+      recovery: recovery[domain],
+      retrieval: retrieval[domain],
+      partial: assessed.candidates.slice(0, 2),
+      nextAction: "",
+    };
+    diagnostic.nextAction = nextAction(diagnostic);
+    return diagnostic;
+  });
   audit.push({
     step: "EVALUATE",
     detail: `Intersect stable entity IDs; eligible shared candidates: ${DOMAINS.map((domain) => `${domain} ${sharedEligible[domain]}`).join(", ")}. Compare within-request ranks and retain non-dominated ordinal trade-offs.`,
@@ -285,9 +330,9 @@ export async function runNegotiation(
     options.length === 3
       ? "Three distinct non-dominated trade-offs were found."
       : options.length === 1
-        ? "One fairness-first path is supported. No distinct non-dominated alternative improves one audience while worsening the other."
+        ? "One fairness-first path is supported. No distinct non-dominated alternative in the retrieved pool improves one audience while worsening the other."
         : options.length === 2
-          ? "Two distinct non-dominated paths are supported; no evidence-backed third directional trade-off exists."
+          ? "Two distinct non-dominated paths are supported; no third directional trade-off was found in the retrieved pool."
           : "No three-act path is supported under the current evidence and rules.";
   audit.push({
     step: "VERIFY",
@@ -308,6 +353,7 @@ export async function runNegotiation(
     resolved,
     audit,
     gaps,
+    diagnostics,
     alternativesNote,
     metrics: {
       sourceCalls: calls,

@@ -233,6 +233,14 @@ describe("conditional planning and negotiation hardening", () => {
     };
     const first = await runNegotiation(request, source);
     expect(first.status).toBe("conceptual");
+    expect(
+      first.options[0].candidates.every(
+        (candidate) => candidate.source === "qloo",
+      ),
+    ).toBe(true);
+    expect(first.options[0].candidates[1].receipt.unverified).toContain(
+      "Film runtime and both duration limits",
+    );
     expect(first.warning).toBeUndefined();
     expect(first.options).toHaveLength(3);
     expect(

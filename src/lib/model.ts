@@ -38,6 +38,7 @@ export type Entity = {
   explainability?: "available" | "unavailable";
   influence?: InfluenceSignal[];
   evidenceWarning?: string;
+  retrievedRank?: number;
 };
 export type InfluenceSignal = { signalId: string; normalizedInfluence: number };
 export type SearchMatch = Pick<Entity, "id" | "name" | "domain">;
@@ -75,7 +76,39 @@ export type Candidate = {
   source: "synthetic" | "qloo";
   influences: [InfluenceSignal[], InfluenceSignal[]];
   explanation: string;
+  receipt: {
+    checked: string[];
+    unverified: string[];
+    limitations: string[];
+  };
 };
+export type EligibilityIssue =
+  | "no-source-results"
+  | "no-shared-ids"
+  | "excluded"
+  | "metadata-conflict"
+  | "invalid-runtime"
+  | "film-limit"
+  | "program-limit"
+  | "rating";
+export type DomainDiagnostic = {
+  domain: Domain;
+  returned: [number, number];
+  shared: number;
+  eligible: number;
+  issues: Partial<Record<EligibilityIssue, number>>;
+  recovery:
+    | "not-needed"
+    | "no-full-page"
+    | "empty-side"
+    | "attempted"
+    | "budget-limited";
+  retrieval: [RetrievalStatus, RetrievalStatus];
+  partial: Candidate[];
+  nextAction: string;
+};
+export type RetrievalStatus =
+  "short-page" | "full-page-unexpanded" | "page-limit-reached";
 export type Blueprint = {
   id: string;
   title: string;
@@ -94,6 +127,7 @@ export type PlanResult = {
   resolved: [SearchMatch[], SearchMatch[]];
   audit: Action[];
   gaps: string[];
+  diagnostics: DomainDiagnostic[];
   alternativesNote: string;
   metrics: {
     sourceCalls: number;

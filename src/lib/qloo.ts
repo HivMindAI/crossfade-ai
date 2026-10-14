@@ -2,7 +2,10 @@ import "server-only";
 import { z } from "zod";
 import { AppError } from "./errors";
 import { cancellableWait, throwIfAborted } from "./cancellation";
+import { validateSearchResults } from "./qloo-search.mjs";
+import { classifyInsightsPage } from "../../scripts/qloo-insights-classify.mjs";
 import {
+  DOMAINS,
   entityType,
   type CulturalSource,
   type Domain,
@@ -14,14 +17,13 @@ import {
 } from "./model";
 
 const DEFAULT_ORIGIN = "https://hackathon.api.qloo.com";
-const APPROVED_ORIGINS = new Set([DEFAULT_ORIGIN, "https://api.qloo.com"]);
 const MAX_RESPONSE_BYTES = 2_000_000;
 
 function approvedOrigin(value: string): string {
   try {
     const url = new URL(value);
     if (
-      APPROVED_ORIGINS.has(url.origin) &&
+      url.origin === DEFAULT_ORIGIN &&
       url.pathname === "/" &&
       !url.search &&
       !url.hash &&
@@ -51,7 +53,14 @@ const rawEntity = z
       .optional(),
   })
   .passthrough();
-const envelope = z
+const searchEnvelope = z
+  .object({
+    success: z.boolean().optional(),
+    // Item validation is Search-specific and shared with the bounded smoke.
+    results: z.array(z.unknown()),
+  })
+  .passthrough();
+const insightsEnvelope = z
   .object({
     success: z.boolean().optional(),
     results: z.object({ entities: z.array(rawEntity) }),
@@ -196,8 +205,7 @@ export class QlooClient implements CulturalSource {
             "Qloo rejected the configured API key.",
             502,
           );
-        if (response.status === 404 && allow404)
-          return { results: { entities: [] } } as z.infer<typeof envelope>;
+        if (response.status === 404 && allow404) return { results: [] };
         if (response.status === 429 || response.status >= 500) {
           const delay = retryDelay(
             response.headers.get("Retry-After"),
@@ -244,20 +252,7 @@ export class QlooClient implements CulturalSource {
             502,
           );
         }
-        const result = envelope.safeParse(parsed);
-        if (!result.success)
-          throw new AppError(
-            "QLOO_MALFORMED",
-            "Qloo returned an unexpected response.",
-            502,
-          );
-        if (result.data.success === false)
-          throw new AppError(
-            "QLOO_UPSTREAM",
-            "Qloo reported an unsuccessful request.",
-            502,
-          );
-        return result.data;
+        return parsed;
       } catch (error) {
         throwIfAborted(signal);
         if (error instanceof AppError) throw error;
@@ -290,6 +285,8 @@ export class QlooClient implements CulturalSource {
     options: { take?: number; signal?: AbortSignal } = {},
   ): Promise<SearchMatch[]> {
     const take = options.take ?? 8;
+    if (!DOMAINS.includes(domain))
+      throw new AppError("INVALID_QUERY", "Invalid Qloo Search type.", 400);
     if (!Number.isInteger(take) || take < 1 || take > 100)
       throw new AppError("INVALID_QUERY", "Invalid Qloo Search size.", 400);
     const params = new URLSearchParams({
@@ -297,22 +294,45 @@ export class QlooClient implements CulturalSource {
       types: entityType(domain),
       take: String(take),
     });
-    const response = await this.get("/search", params, true, options.signal);
-    if (response.results.entities.length > take)
+    const response = searchEnvelope.safeParse(
+      await this.get("/search", params, true, options.signal),
+    );
+    if (!response.success)
+      throw new AppError(
+        "QLOO_MALFORMED",
+        "Qloo Search returned an unexpected response.",
+        502,
+      );
+    if (response.data.success === false)
+      throw new AppError("QLOO_UPSTREAM", "Qloo Search reported failure.", 502);
+    if ("error" in response.data)
+      throw new AppError(
+        "QLOO_UPSTREAM",
+        "Qloo Search reported an error.",
+        502,
+      );
+    if (response.data.results.length > take)
       throw new AppError(
         "QLOO_MALFORMED",
         "Qloo returned more Search results than requested.",
         502,
       );
-    const seen = new Set<string>();
-    return response.results.entities
-      .filter((item) => {
-        if (item.type && item.type !== entityType(domain)) return false;
-        if (seen.has(item.entity_id)) return false;
-        seen.add(item.entity_id);
-        return true;
-      })
-      .map((item) => ({ id: item.entity_id, name: item.name, domain }));
+    const validated = validateSearchResults(
+      response.data.results,
+      entityType(domain),
+      take,
+    );
+    if (validated.fatal)
+      throw new AppError(
+        "QLOO_MALFORMED",
+        "Qloo Search returned invalid or ambiguous entities.",
+        502,
+      );
+    return validated.entities.map((item) => ({
+      id: item.entity_id,
+      name: item.name,
+      domain,
+    }));
   }
 
   async insights(
@@ -342,42 +362,60 @@ export class QlooClient implements CulturalSource {
     });
     if (excludedIds.length)
       params.set("filter.exclude.entities", excludedIds.join(","));
-    const response = await this.get("/v2/insights", params, false, signal);
-    if (response.results.entities.length > options.take)
+    const response = insightsEnvelope.safeParse(
+      await this.get("/v2/insights", params, false, signal),
+    );
+    if (!response.success)
+      throw new AppError(
+        "QLOO_MALFORMED",
+        "Qloo Insights returned an unexpected response.",
+        502,
+      );
+    if (response.data.success === false)
+      throw new AppError(
+        "QLOO_UPSTREAM",
+        "Qloo Insights reported failure.",
+        502,
+      );
+    if (response.data.results.entities.length > options.take)
       throw new AppError(
         "QLOO_MALFORMED",
         "Qloo returned more Insights results than requested.",
         502,
       );
-    const entities: Entity[] = response.results.entities
-      .filter((item) => !excludedIds.includes(item.entity_id))
-      .map((item) => {
-        if (item.type && item.type !== entityType(domain))
-          throw new AppError(
-            "QLOO_MALFORMED",
-            "Qloo returned a result of the wrong type.",
-            502,
-          );
-        const explainability = record(item.query?.explainability);
-        return {
-          id: item.entity_id,
-          name: item.name,
-          domain,
-          // The public contract does not establish a film runtime field or
-          // unit. Do not promote an undocumented property into a hard gate.
-          contentRating:
-            domain === "movie" &&
-            typeof item.properties?.content_rating === "string"
-              ? item.properties.content_rating
-              : undefined,
-          explainability: explainability ? "available" : "unavailable",
-          influence: influenceSignals(explainability, signalIds),
-          evidenceWarning:
-            typeof explainability?.warning === "string"
-              ? "Qloo reported that explainability could not be computed."
-              : undefined,
-        };
-      });
+    const classification = classifyInsightsPage(
+      response.data.results.entities,
+      entityType(domain),
+    );
+    if (!classification.accepted)
+      throw new AppError(
+        "QLOO_MALFORMED",
+        "Qloo Insights returned invalid or ambiguous entity metadata.",
+        502,
+      );
+    // Keep returned positions and full-page counts intact. The shared local
+    // eligibility filter excludes rejected IDs before any option/partial receipt.
+    const entities: Entity[] = response.data.results.entities.map((item) => {
+      const explainability = record(item.query?.explainability);
+      return {
+        id: item.entity_id,
+        name: item.name,
+        domain,
+        // The public contract does not establish a film runtime field or
+        // unit. Do not promote an undocumented property into a hard gate.
+        contentRating:
+          domain === "movie" &&
+          typeof item.properties?.content_rating === "string"
+            ? item.properties.content_rating
+            : undefined,
+        explainability: explainability ? "available" : "unavailable",
+        influence: influenceSignals(explainability, signalIds),
+        evidenceWarning:
+          typeof explainability?.warning === "string"
+            ? "Qloo reported that explainability could not be computed."
+            : undefined,
+      };
+    });
     return { entities, signalIds, source: "qloo", ...options };
   }
 }

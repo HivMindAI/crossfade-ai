@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { mockPlan } from "./fixtures";
 
 test("supports arrow, Home, and End keys in result tabs", async ({ page }) => {
   await page.goto("/");
@@ -50,6 +51,8 @@ test("synthetic negotiation, evidence, and live repair", async ({ page }) => {
     page.getByText("Synthetic fixture evidence").first(),
   ).toBeVisible();
   await expect(page.getByText("Algorithmic score").first()).toBeVisible();
+  await expect(page.getByText(/Entity ID:/).first()).toBeVisible();
+  await expect(page.getByText(/Checked: Same entity ID/).first()).toBeVisible();
   await expect(page.getByText("Creative interpretation").first()).toBeVisible();
   await expect(
     page.getByText(/positions within separate requests/).first(),
@@ -60,6 +63,11 @@ test("synthetic negotiation, evidence, and live repair", async ({ page }) => {
     page.getByText(
       /The rejected component was excluded and both audiences were reevaluated/,
     ),
+  ).toBeVisible();
+  await expect(
+    page
+      .getByText(/Rejected .* → .*Status: duration-verified complete path/)
+      .first(),
   ).toBeVisible();
   await expect(page.locator(".act h4").first()).not.toHaveText(original ?? "");
 });
@@ -75,14 +83,28 @@ test("shows a no-solution state for impossible film rules", async ({
   await page.locator(".rating-list label").nth(3).click();
   await page.getByRole("button", { name: "Find the shared ground" }).click();
   await expect(
-    page.getByRole("heading", { name: "No honest bridge under these rules." }),
+    page.getByRole("heading", {
+      name: "No complete path in the retrieved evidence.",
+    }),
   ).toBeVisible();
   await expect(page.locator(".results-meta")).toHaveText("NO COMPLETE PATH");
   await expect(
-    page.getByText(/movie: every non-rejected shared film/).first(),
+    page.getByText(/movie: shared entities in the retrieved pool/).first(),
+  ).toBeVisible();
+  await expect(
+    page
+      .locator(".diagnostic-card")
+      .filter({ hasText: "Film · blocks the full plan" }),
+  ).toBeVisible();
+  await expect(
+    page.getByText(/Partial evidence only · not a complete schedule/).first(),
   ).toBeVisible();
   await page.getByText("Decision and recovery record").click();
   await expect(page.getByText(/Hard rules stay intact/)).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(
+    await page.evaluate(() => document.documentElement.scrollWidth),
+  ).toBeLessThanOrEqual(390);
 });
 
 test("a total-program limit includes the non-film agenda", async ({ page }) => {
@@ -95,7 +117,9 @@ test("a total-program limit includes the non-film agenda", async ({ page }) => {
   await expect(programLimit).toHaveValue("120");
   await page.getByRole("button", { name: "Find the shared ground" }).click();
   await expect(
-    page.getByRole("heading", { name: "No honest bridge under these rules." }),
+    page.getByRole("heading", {
+      name: "No complete path in the retrieved evidence.",
+    }),
   ).toBeVisible();
   await expect(page.getByText(/total-time/).first()).toBeVisible();
 });
@@ -140,52 +164,7 @@ test("mock live evidence without runtime is clearly conceptual, not a schedule",
   await page.getByRole("button", { name: "Live Qloo" }).click();
   await page.route("**/api/plan", async (route) =>
     route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({
-        status: "conceptual",
-        mode: "live",
-        warning: undefined,
-        resolved: [[], []],
-        audit: [
-          {
-            step: "VERIFY",
-            detail: "Missing runtime prevents a verified schedule.",
-          },
-        ],
-        gaps: [
-          "Scheduling is unverified: obtain independent runtime metadata.",
-        ],
-        alternativesNote:
-          "One fairness-first path is supported. No distinct alternative exists.",
-        metrics: { sourceCalls: 8, recoveryCalls: 0, elapsedMs: 1 },
-        options: [
-          {
-            id: "artist~film~book",
-            title: "The Shared Exchange",
-            path: "fairness",
-            balance: [3, 3],
-            programMinutes: null,
-            scheduleStatus: "conceptual",
-            unverified: ["runtime", "content rating"],
-            rationale: "A creative sequence; no schedule is verified.",
-            candidates: (["artist", "movie", "book"] as const).map(
-              (domain, index) => ({
-                entity: {
-                  id: domain,
-                  name: ["Music", "Film", "Book"][index],
-                  domain,
-                },
-                ranks: [1, 1],
-                signals: [[], []],
-                influences: [[], []],
-                source: "qloo",
-                explanation: "Mocked shared-ID evidence for UI testing only.",
-              }),
-            ),
-          },
-        ],
-      }),
+      json: await mockPlan(route.request().postDataJSON(), { films: 1 }),
     }),
   );
   await page.getByRole("button", { name: "Find the shared ground" }).click();
@@ -196,10 +175,10 @@ test("mock live evidence without runtime is clearly conceptual, not a schedule",
   ).toBeVisible();
   await page.getByRole("tab", { name: "Evidence" }).click();
   await expect(
-    page.getByText(/missing values have not passed the hard gates/),
+    page.getByText(/Unverified: Film runtime and both duration limits/),
   ).toBeVisible();
+  await expect(page.getByText("Qloo-returned evidence").first()).toBeVisible();
 });
-
 test("editing a constraint clears the prior plan until it is reevaluated", async ({
   page,
 }) => {

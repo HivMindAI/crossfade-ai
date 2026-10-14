@@ -916,6 +916,30 @@ select:focus-visible {
   cursor: pointer;
   font-weight: 700;
 }
+.diagnostic-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 250px), 1fr));
+  gap: 12px;
+  margin: 24px 0;
+}
+.diagnostic-card {
+  border: 1px solid #dde4d9;
+  background: #f7f8f4;
+  padding: 18px;
+  overflow-wrap: anywhere;
+}
+.diagnostic-card h4 {
+  margin: 0 0 10px;
+  font-size: 14px;
+}
+.diagnostic-card p {
+  color: #496052;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.diagnostic-card ul {
+  padding-left: 18px;
+}
 .alternatives-note {
   color: #607567;
   font-size: 12px;
@@ -1512,6 +1536,9 @@ summary:focus-visible {
   }
   .plan-tabs {
     padding: 0 20px;
+  }
+  .no-solution {
+    padding: 24px;
   }
 }
 @media (prefers-reduced-motion: reduce) {

@@ -1,0 +1,19 @@
+# Backend handoff: Insights domain classification after Milestone 9G
+
+## Evidence
+
+- **Owner-observed live:** artist Search HTTP 200 with three valid results; Movie Insights HTTP 200 with five structurally valid results. All five top-level `type` values were classified as generic; none had a `types` array; no recognized contradictory primary domain was observed. The five `subtype` fields are not yet known. Book Insights has not run.
+- **Official documentation:** the [basic Insights Movie response example](https://raw.githubusercontent.com/qloo/docs-public/main/reference/basic-insights-use-case.md) contains `type: urn:entity` and `subtype: urn:entity:movie`. The [Insights reference](https://raw.githubusercontent.com/qloo/docs-public/main/reference/insights-api-deep-dive.md) defines `filter.type` as the request category. The [Entity Search by ID reference](https://raw.githubusercontent.com/qloo/docs-public/main/reference/get-entities.md) permits lookup by `entity_ids` but does not establish a result-item category schema.
+- **Hypothesis still requiring live evidence:** the owner's five Movie results may also carry exact `subtype: urn:entity:movie`. The official example supports this pattern for Movie but does not prove those five values, Artist/Book response shapes, or the complete production journey.
+
+## Current code and safe diagnostic
+
+Production [Insights adapter](../src/lib/qloo.ts) still requires every returned item's top-level `type` to equal the requested category and ignores `subtype`. No production code was changed in Milestone 9G. The diagnostic-only [classification helper](../scripts/qloo-insights-classify.mjs) accepts an explicit Movie category as either exact top-level type or generic top-level `urn:entity` plus exact Movie subtype. It requires valid identity and category metadata and rejects recognized primary-domain conflicts. Generic Artist/Book subtype acceptance stays closed pending response evidence. It does not use the request's `filter.type` as category proof.
+
+The owner-controlled `npm run qloo:smoke -- --movie-insights-once` checks one Search seed and one Movie Insights page, with no Book request and a hard maximum of two attempts. It prints only aggregate subtype counts, kinds, fixed category labels and fixed rejection reasons. It has zero retries and retains the hackathon-only host, request timeout, manual redirects, 2 MB body limit, and no raw payload logging. The full three-request smoke still mirrors the production top-level Insights rule.
+
+## Backend change after the owner-controlled result
+
+If the focused diagnostic shows exact Movie subtype on all results, valid identities, and no contradictory metadata, update the production Insights parser with an **Insights-specific** classifier: accept exact top-level Movie type or generic `urn:entity` with exact Movie subtype; fail closed on missing, malformed, wrong-domain or conflicting metadata. Keep Search's top-level `results` and `types` array parser independent from Insights' `results.entities` envelope. Preserve row order, page counts, pagination, exclusions, request limits and evidence provenance. Add invented-fixture tests for a mixed page with one invalid row, generic-plus-exact subtype, missing and wrong subtype, conflicting recognized domains, malformed fields, and empty results. Do not use popularity as an affinity measure.
+
+Do not extend generic/subtype acceptance to Artist or Book until their contracts are documented or owner-observed. If the Movie subtype is absent or ambiguous, continue to reject it and investigate independent entity-ID lookup only through a separately authorized bounded test; the public lookup page does not establish its response category fields. Confirm the production adapter with owner-authorized integration tests before claiming a complete two-audience journey.

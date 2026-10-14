@@ -3,6 +3,7 @@ import {
   type Blueprint,
   type Candidate,
   type Domain,
+  type EligibilityIssue,
   type Entity,
   type EvidenceSet,
   type PlanRequest,
@@ -13,7 +14,12 @@ export const PROGRAM_OVERHEAD_MINUTES = 45; // 20 listening, 10 transition, 15 d
 export const DEFAULT_MAX_PROGRAM_MINUTES = 180;
 
 function mergedEntity(a: Entity, b: Entity): Entity | undefined {
-  if (a.duration && b.duration && a.duration !== b.duration) return undefined;
+  if (
+    a.duration !== undefined &&
+    b.duration !== undefined &&
+    a.duration !== b.duration
+  )
+    return undefined;
   if (a.contentRating && b.contentRating && a.contentRating !== b.contentRating)
     return undefined;
   return {
@@ -23,27 +29,149 @@ function mergedEntity(a: Entity, b: Entity): Entity | undefined {
   };
 }
 
-function permitted(entity: Entity, request: PlanRequest): boolean {
-  if (request.constraints.excludedIds.includes(entity.id)) return false;
-  if (entity.domain !== "movie") return true;
+function indexedEvidence(set: EvidenceSet) {
+  const indexed = new Map<
+    string,
+    { entity: Entity; rank: number; conflict: boolean }
+  >();
+  set.entities.forEach((entity, index) => {
+    const previous = indexed.get(entity.id);
+    if (!previous)
+      indexed.set(entity.id, {
+        entity,
+        rank: entity.retrievedRank ?? index + 1,
+        conflict: false,
+      });
+    else {
+      const merged = mergedEntity(previous.entity, entity);
+      if (!merged) previous.conflict = true;
+      else previous.entity = merged;
+    }
+  });
+  return indexed;
+}
+
+function eligibilityIssue(
+  entity: Entity,
+  request: PlanRequest,
+): EligibilityIssue | undefined {
+  if (request.constraints.excludedIds.includes(entity.id)) return "excluded";
+  if (entity.domain !== "movie") return undefined;
   // Missing metadata permits only a conceptual option. Known violations still
   // disqualify the film; unknown values never count as a passed hard gate.
   if (entity.duration !== undefined) {
     if (!Number.isInteger(entity.duration) || entity.duration <= 0)
-      return false;
-    if (entity.duration > request.constraints.maxMovieMinutes) return false;
+      return "invalid-runtime";
+    if (entity.duration > request.constraints.maxMovieMinutes)
+      return "film-limit";
     if (
       entity.duration + PROGRAM_OVERHEAD_MINUTES >
       (request.constraints.maxProgramMinutes ?? DEFAULT_MAX_PROGRAM_MINUTES)
     )
-      return false;
+      return "program-limit";
   }
-  return (
-    entity.contentRating === undefined ||
-    request.constraints.allowedRatings.includes(
+  if (
+    entity.contentRating !== undefined &&
+    !request.constraints.allowedRatings.includes(
       entity.contentRating as PlanRequest["constraints"]["allowedRatings"][number],
     )
-  );
+  )
+    return "rating";
+  return undefined;
+}
+
+export function inspectDomain(
+  domain: Domain,
+  pair: [EvidenceSet, EvidenceSet],
+  request: PlanRequest,
+): {
+  candidates: Candidate[];
+  shared: number;
+  issues: Partial<Record<EligibilityIssue, number>>;
+} {
+  const [a, b] = pair;
+  const issues: Partial<Record<EligibilityIssue, number>> = {};
+  const count = (issue: EligibilityIssue) => {
+    issues[issue] = (issues[issue] ?? 0) + 1;
+  };
+  if (!a.entities.length || !b.entities.length) count("no-source-results");
+  const bRank = indexedEvidence(b);
+  let shared = 0;
+  const candidates = [...indexedEvidence(a).values()]
+    .flatMap(({ entity: first, rank, conflict }) => {
+      const second = bRank.get(first.id);
+      if (!second) return [];
+      shared++;
+      const entity = mergedEntity(first, second.entity);
+      if (!entity || conflict || second.conflict) {
+        count("metadata-conflict");
+        return [];
+      }
+      const issue = eligibilityIssue(entity, request);
+      if (issue) {
+        count(issue);
+        return [];
+      }
+      const ranks: [number, number] = [rank, second.rank];
+      const checked = [
+        "Same entity ID in both audience result sets",
+        "Rejected IDs excluded",
+      ];
+      const unverified: string[] = [];
+      if (domain === "movie") {
+        if (entity.duration === undefined)
+          unverified.push("Film runtime and both duration limits");
+        else
+          checked.push(
+            "Known film runtime within film and total-program limits",
+          );
+        if (entity.contentRating === undefined)
+          unverified.push("Film content rating");
+        else checked.push("Known film rating in allowed ratings");
+        unverified.push("Screening rights, availability, and venue");
+      }
+      const limitations = [
+        "Rank positions are ordinal within separate requests, not affinity probabilities",
+      ];
+      if (a.source === "synthetic")
+        limitations.push("Invented development fixture; not Qloo evidence");
+      if (first.evidenceWarning) limitations.push(first.evidenceWarning);
+      if (
+        second.entity.evidenceWarning &&
+        second.entity.evidenceWarning !== first.evidenceWarning
+      )
+        limitations.push(second.entity.evidenceWarning);
+      if (
+        a.source === "qloo" &&
+        (first.explainability !== "available" ||
+          second.entity.explainability !== "available")
+      )
+        limitations.push(
+          "Recognized per-result Qloo explainability unavailable for at least one audience",
+        );
+      return [
+        {
+          entity,
+          ranks,
+          signals: [a.signalIds, b.signalIds] as [string[], string[]],
+          influences: [
+            first.influence ?? [],
+            second.entity.influence ?? [],
+          ] as Candidate["influences"],
+          source: a.source,
+          explanation: `Appears by the same entity ID in both result sets: #${ranks[0]} for ${request.audiences[0].name}, #${ranks[1]} for ${request.audiences[1].name}. These are positions within separate requests, not probabilities.`,
+          receipt: { checked, unverified, limitations },
+        },
+      ];
+    })
+    .sort(
+      (x, y) =>
+        Math.max(...x.ranks) - Math.max(...y.ranks) ||
+        x.ranks[0] + x.ranks[1] - y.ranks[0] - y.ranks[1] ||
+        x.entity.id.localeCompare(y.entity.id),
+    );
+  if (a.entities.length && b.entities.length && !shared) count("no-shared-ids");
+  return { candidates, shared, issues };
 }
 
 export function buildCandidates(
@@ -52,42 +180,7 @@ export function buildCandidates(
 ): Record<Domain, Candidate[]> {
   const result = {} as Record<Domain, Candidate[]>;
   for (const domain of DOMAINS) {
-    const [a, b] = matrix[domain];
-    const bRank = new Map<string, { entity: Entity; rank: number }>();
-    b.entities.forEach((entity, index) => {
-      if (!bRank.has(entity.id))
-        bRank.set(entity.id, { entity, rank: index + 1 });
-    });
-    const seen = new Set<string>();
-    result[domain] = a.entities
-      .flatMap((first, index) => {
-        if (seen.has(first.id)) return [];
-        seen.add(first.id);
-        const second = bRank.get(first.id);
-        if (!second) return [];
-        const entity = mergedEntity(first, second.entity);
-        if (!entity || !permitted(entity, request)) return [];
-        const ranks: [number, number] = [index + 1, second.rank];
-        return [
-          {
-            entity,
-            ranks,
-            signals: [a.signalIds, b.signalIds] as [string[], string[]],
-            influences: [
-              first.influence ?? [],
-              second.entity.influence ?? [],
-            ] as Candidate["influences"],
-            source: a.source,
-            explanation: `Appears by the same entity ID in both result sets: #${ranks[0]} for ${request.audiences[0].name}, #${ranks[1]} for ${request.audiences[1].name}. These are positions within separate requests, not probabilities.`,
-          },
-        ];
-      })
-      .sort(
-        (x, y) =>
-          Math.max(...x.ranks) - Math.max(...y.ranks) ||
-          x.ranks[0] + x.ranks[1] - y.ranks[0] - y.ranks[1] ||
-          x.entity.id.localeCompare(y.entity.id),
-      );
+    result[domain] = inspectDomain(domain, matrix[domain], request).candidates;
   }
   return result;
 }

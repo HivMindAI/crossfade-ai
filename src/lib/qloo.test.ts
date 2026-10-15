@@ -75,7 +75,17 @@ describe("Qloo client", () => {
       code: "QLOO_MALFORMED",
     });
     await expect(client.insights("artist", ["seed"], [])).rejects.toMatchObject(
-      { code: "QLOO_MALFORMED" },
+      {
+        code: "QLOO_MALFORMED",
+        details: {
+          endpoint: "insights",
+          domain: "artist",
+          category: "invalid-envelope",
+          resultCount: null,
+          acceptedCount: null,
+          rejectedCount: null,
+        },
+      },
     );
   });
   it("rejects pages larger than the requested Search or Insights size", async () => {
@@ -99,7 +109,17 @@ describe("Qloo client", () => {
     ).rejects.toMatchObject({ code: "QLOO_MALFORMED" });
     await expect(
       client.insights("artist", ["seed"], [], { take: 1, page: 1 }),
-    ).rejects.toMatchObject({ code: "QLOO_MALFORMED" });
+    ).rejects.toMatchObject({
+      code: "QLOO_MALFORMED",
+      details: {
+        endpoint: "insights",
+        domain: "artist",
+        category: "oversized-page",
+        resultCount: 2,
+        acceptedCount: null,
+        rejectedCount: null,
+      },
+    });
   });
   it("accepts only the hackathon host before sending a key", async () => {
     const calls: URL[] = [];
@@ -737,6 +757,98 @@ describe("Qloo client", () => {
     expect(result.entities.every((item) => item.domain === "movie")).toBe(true);
     expect(result).toMatchObject({ source: "qloo", take: 5, page: 2 });
   });
+
+  it("accepts structurally explicit generic Artist Insights in the production adapter offline", async () => {
+    const rows = ["first", "second"].map((label) => ({
+      entity_id: `invented-artist-${label}`,
+      name: `Invented ${label}`,
+      type: "urn:entity",
+      subtype: "urn:entity:artist",
+    }));
+    const client = new QlooClient(
+      "offline-test-key",
+      transport(async () => envelope(rows)),
+    );
+    const result = await client.insights("artist", ["invented-seed"], [], {
+      take: 5,
+      page: 1,
+    });
+    expect(result.entities.map((item) => item.id)).toEqual(
+      rows.map((row) => row.entity_id),
+    );
+    expect(result).toMatchObject({
+      source: "qloo",
+      signalIds: ["invented-seed"],
+      take: 5,
+      page: 1,
+    });
+  });
+
+  it.each([
+    {
+      label: "missing subtype",
+      row: { type: "urn:entity" },
+      reason: "missing-or-wrong-subtype",
+    },
+    {
+      label: "wrong category",
+      row: { type: "urn:entity", subtype: "urn:entity:book" },
+      reason: "missing-or-wrong-subtype",
+    },
+    {
+      label: "conflicting category array",
+      row: {
+        type: "urn:entity",
+        subtype: "urn:entity:artist",
+        types: ["urn:entity:artist", "urn:entity:movie"],
+      },
+      reason: "conflicting-primary-domains",
+    },
+  ])(
+    "fails closed for Artist Insights $label with redacted counts",
+    async ({ row, reason }) => {
+      const client = new QlooClient(
+        "offline-test-key",
+        transport(async () =>
+          envelope([
+            {
+              entity_id: "invented-good",
+              name: "Invented Good",
+              type: "urn:entity",
+              subtype: "urn:entity:artist",
+            },
+            {
+              entity_id: "invented-private-id",
+              name: "Invented Private Name",
+              ...row,
+            },
+          ]),
+        ),
+      );
+      let caught: unknown;
+      try {
+        await client.insights("artist", ["invented-seed"], []);
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toMatchObject({
+        code: "QLOO_MALFORMED",
+        status: 502,
+        details: {
+          endpoint: "insights",
+          domain: "artist",
+          category: "entity-classification",
+          resultCount: 2,
+          acceptedCount: 1,
+          rejectedCount: 1,
+          reasons: { [reason]: 1 },
+        },
+      });
+      expect(JSON.stringify(caught)).not.toMatch(
+        /invented-private-id|Invented Private Name|offline-test-key/,
+      );
+    },
+  );
 
   it.each([
     {

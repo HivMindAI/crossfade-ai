@@ -261,3 +261,18 @@ test("an in-flight plan cannot overwrite a newly edited constraint", async ({
     "After the Last Train",
   );
 });
+
+test("a slow synthetic plan explains the wait and still uses the real API", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await page.route("**/api/plan", async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 5_200));
+    await route.continue();
+  });
+  await page.getByRole("button", { name: "Find the shared ground" }).click();
+  await expect(
+    page.getByText("Still checking the available evidence.", { exact: false }),
+  ).toBeVisible();
+  await expect(page.getByText("3 DURATION-CHECKED PATHS")).toBeVisible();
+});

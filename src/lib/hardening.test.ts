@@ -96,6 +96,57 @@ describe("conditional planning and negotiation hardening", () => {
     ).toBe(true);
   });
 
+  it("keeps exact ID intersection across full pages and reports disjoint 40-row windows honestly", async () => {
+    const sharedId = "fixture-shared-artist";
+    const makeSource = (includeShared: boolean): CulturalSource => ({
+      async search(name, domain) {
+        return [{ id: `seed-${name}`, name, domain }];
+      },
+      async insights(domain, signalIds, _excluded, options) {
+        const side = signalIds[0].includes("Miles") ? "a" : "b";
+        const page = options?.page ?? 1;
+        const entities = Array.from({ length: 20 }, (_, index) =>
+          entity(`${domain}-${side}-${page}-${index}`, domain),
+        );
+        if (includeShared && domain === "artist") {
+          if (side === "a" && page === 1)
+            entities[0] = entity(sharedId, domain);
+          if (side === "b" && page === 2)
+            entities[19] = entity(sharedId, domain);
+        }
+        return { entities, signalIds, source: "synthetic", ...options };
+      },
+    });
+
+    const disjoint = await runNegotiation(base(), makeSource(false));
+    expect(disjoint.status).toBe("no-solution");
+    expect(disjoint.options).toEqual([]);
+    expect(disjoint.metrics).toMatchObject({
+      sourceCalls: 14,
+      recoveryCalls: 6,
+    });
+    expect(
+      disjoint.diagnostics.every(
+        (item) =>
+          item.returned[0] === 40 &&
+          item.returned[1] === 40 &&
+          item.shared === 0 &&
+          item.recovery === "attempted" &&
+          item.retrieval.every((status) => status === "page-limit-reached"),
+      ),
+    ).toBe(true);
+
+    const overlapping = await runNegotiation(base(), makeSource(true));
+    expect(
+      overlapping.diagnostics.find((item) => item.domain === "artist")?.shared,
+    ).toBe(1);
+    expect(overlapping.metrics.sharedEligible.artist).toBe(1);
+    expect(
+      overlapping.diagnostics.find((item) => item.domain === "artist")
+        ?.partial[0]?.ranks,
+    ).toEqual([1, 40]);
+  });
+
   it("returns a precise no-solution gap when one short domain has no shared IDs", async () => {
     const source: CulturalSource = {
       async search(name, domain) {

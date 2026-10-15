@@ -110,6 +110,7 @@ export function Workspace() {
   const [result, setResult] = useState<PlanResult | null>(null);
   const [selected, setSelected] = useState(0);
   const [busy, setBusy] = useState(false);
+  const [longWait, setLongWait] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [view, setView] = useState<"blueprint" | "evidence" | "trace">(
@@ -130,6 +131,7 @@ export function Workspace() {
     requestController.current?.abort();
     requestController.current = null;
     setBusy(false);
+    setLongWait(false);
     setResult(null);
     setError(null);
     setDisambiguation(null);
@@ -154,6 +156,7 @@ export function Workspace() {
     const controller = new AbortController();
     requestController.current = controller;
     setBusy(true);
+    setLongWait(false);
     setResult(null);
     setReplacements([]);
     setError(null);
@@ -358,6 +361,12 @@ export function Workspace() {
   useEffect(() => {
     document.documentElement.dataset.mode = input.mode;
   }, [input.mode]);
+
+  useEffect(() => {
+    if (!busy) return;
+    const timer = window.setTimeout(() => setLongWait(true), 3_000);
+    return () => window.clearTimeout(timer);
+  }, [busy]);
 
   return (
     <div className="site-shell">
@@ -835,6 +844,12 @@ export function Workspace() {
                 Resolving interests, gathering separate evidence, and checking
                 the rules. The result will appear here.
               </p>
+              {longWait && (
+                <p>
+                  Still checking the available evidence. Keep this page open;
+                  the planner will show a result or a clear error.
+                </p>
+              )}
             </div>
           ) : !result ? (
             <div className="empty-state">

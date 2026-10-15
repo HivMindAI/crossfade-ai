@@ -16,10 +16,6 @@ const supportedTypes = new Set([
   "urn:entity:book",
   "urn:entity:movie",
 ]);
-const verifiedGenericSubtypeTypes = new Set([
-  "urn:entity:book",
-  "urn:entity:movie",
-]);
 
 export function recognizedPrimary(value) {
   if (typeof value !== "string") return undefined;
@@ -73,10 +69,8 @@ export function classifyInsightsEntity(item, expectedType) {
     return { accepted: false, reason: "unexpected-top-level-type" };
   if (hasSubtype && !validTypeString(subtype))
     return { accepted: false, reason: "invalid-subtype" };
-  // Owner-observed Movie and Book Insights use this exact pairing.
-  // Generic Artist subtype evidence remains unverified.
-  if (top === "urn:entity" && !verifiedGenericSubtypeTypes.has(expectedType))
-    return { accepted: false, reason: "unverified-generic-subtype-domain" };
+  // Structural policy for all three domains. The Artist pairing is implemented
+  // offline but remains unverified against a real Artist Insights response.
   if (top === "urn:entity" && subtype !== expectedType)
     return { accepted: false, reason: "missing-or-wrong-subtype" };
   if (

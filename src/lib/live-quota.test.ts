@@ -1,5 +1,9 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { reserveLivePlan } from "./live-quota";
+import {
+  REDIS_RESERVATION_TIMEOUT_MS,
+  reserveSharedQuota,
+} from "./live-quota-core.mjs";
 
 function configure() {
   vi.stubEnv("UPSTASH_REDIS_REST_URL", "https://safe-example.upstash.io");
@@ -7,7 +11,17 @@ function configure() {
   vi.stubEnv("QLOO_LIVE_PLANS_PER_HOUR", "2");
 }
 
-afterEach(() => vi.unstubAllEnvs());
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.restoreAllMocks();
+});
+
+const coreOptions = (transport: typeof fetch) => ({
+  rawUrl: "https://safe-example.upstash.io",
+  token: "offline-test-token",
+  rawLimit: "2",
+  transport,
+});
 
 it("fails closed without a shared quota configuration", async () => {
   vi.stubEnv("UPSTASH_REDIS_REST_URL", "");
@@ -145,20 +159,80 @@ it("models concurrent atomic reservations, exact admission, and window reset off
 
 it("fails closed on a provider timeout", async () => {
   configure();
+  expect(REDIS_RESERVATION_TIMEOUT_MS).toBe(8_000);
+  const timeout = vi
+    .spyOn(AbortSignal, "timeout")
+    .mockImplementation(() =>
+      AbortSignal.abort(new DOMException("private", "TimeoutError")),
+    );
   const transport = vi
     .fn<typeof fetch>()
-    .mockImplementation(async (_url, init) => {
-      await new Promise((_resolve, reject) => {
-        init?.signal?.addEventListener(
-          "abort",
-          () => reject(new DOMException("timed out", "AbortError")),
-          { once: true },
-        );
-      });
-      throw new Error("unreachable");
-    });
+    .mockRejectedValue(new DOMException("private", "AbortError"));
+  await expect(
+    reserveSharedQuota(coreOptions(transport)),
+  ).rejects.toMatchObject({
+    category: "timeout",
+    httpStatus: null,
+  });
+  expect(timeout).toHaveBeenCalledWith(8_000);
   await expect(reserveLivePlan(transport)).rejects.toMatchObject({
     code: "QLOO_GUARD_UNAVAILABLE",
     status: 503,
   });
+});
+
+it("admits a valid response arriving after the former 2.5-second deadline", async () => {
+  const transport = vi
+    .fn<typeof fetch>()
+    .mockImplementation(async (_url, init) => {
+      return new Promise<Response>((resolve, reject) => {
+        const timer = setTimeout(
+          () => resolve(Response.json({ result: [1, 1] })),
+          2_700,
+        );
+        init?.signal?.addEventListener(
+          "abort",
+          () => {
+            clearTimeout(timer);
+            reject(new DOMException("offline timeout", "AbortError"));
+          },
+          { once: true },
+        );
+      });
+    });
+  await reserveSharedQuota(coreOptions(transport));
+  expect(transport).toHaveBeenCalledTimes(1);
+});
+
+it.each([
+  ["authentication", new Response(null, { status: 401 }), 401],
+  ["http-status", new Response(null, { status: 503 }), 503],
+  ["provider-error", Response.json({ error: "private" }), 200],
+  ["malformed-response", Response.json({ result: [1, 999] }), 200],
+  ["exhausted", Response.json({ result: [0, 2] }), 200],
+] as const)(
+  "classifies %s without provider text",
+  async (category, response, status) => {
+    const transport = vi.fn<typeof fetch>().mockResolvedValue(response);
+    await expect(
+      reserveSharedQuota(coreOptions(transport)),
+    ).rejects.toMatchObject({
+      category,
+      httpStatus: status,
+    });
+    expect(transport).toHaveBeenCalledTimes(1);
+  },
+);
+
+it("classifies a network rejection as transport with no retry", async () => {
+  const transport = vi
+    .fn<typeof fetch>()
+    .mockRejectedValue(new Error("private"));
+  await expect(
+    reserveSharedQuota(coreOptions(transport)),
+  ).rejects.toMatchObject({
+    category: "transport",
+    httpStatus: null,
+  });
+  expect(transport).toHaveBeenCalledTimes(1);
 });

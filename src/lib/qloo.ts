@@ -370,6 +370,14 @@ export class QlooClient implements CulturalSource {
         "QLOO_MALFORMED",
         "Qloo Insights returned an unexpected response.",
         502,
+        {
+          endpoint: "insights",
+          domain,
+          category: "invalid-envelope",
+          resultCount: null,
+          acceptedCount: null,
+          rejectedCount: null,
+        },
       );
     if (response.data.success === false)
       throw new AppError(
@@ -382,6 +390,14 @@ export class QlooClient implements CulturalSource {
         "QLOO_MALFORMED",
         "Qloo returned more Insights results than requested.",
         502,
+        {
+          endpoint: "insights",
+          domain,
+          category: "oversized-page",
+          resultCount: response.data.results.entities.length,
+          acceptedCount: null,
+          rejectedCount: null,
+        },
       );
     const classification = classifyInsightsPage(
       response.data.results.entities,
@@ -392,6 +408,15 @@ export class QlooClient implements CulturalSource {
         "QLOO_MALFORMED",
         "Qloo Insights returned invalid or ambiguous entity metadata.",
         502,
+        {
+          endpoint: "insights",
+          domain,
+          category: "entity-classification",
+          resultCount: response.data.results.entities.length,
+          acceptedCount: classification.acceptedCount,
+          rejectedCount: classification.rejectedCount,
+          reasons: classification.reasons,
+        },
       );
     // Keep returned positions and full-page counts intact. The shared local
     // eligibility filter excludes rejected IDs before any option/partial receipt.

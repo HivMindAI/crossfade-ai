@@ -74,7 +74,7 @@ describe("bounded Qloo smoke script", () => {
     },
   );
 
-  it("keeps generic top-level Artist subtype acceptance closed pending evidence", () => {
+  it("admits an explicitly typed generic Artist fixture without claiming live verification", () => {
     expect(
       classifyInsightsEntity(
         {
@@ -85,11 +85,43 @@ describe("bounded Qloo smoke script", () => {
         },
         "urn:entity:artist",
       ),
-    ).toEqual({
-      accepted: false,
-      reason: "unverified-generic-subtype-domain",
-    });
+    ).toEqual({ accepted: true, reason: "accepted" });
   });
+
+  it.each(["artist", "movie", "book"])(
+    "requires returned exact %s subtype for a generic Insights type",
+    (domain) => {
+      const expected = `urn:entity:${domain}`;
+      const base = {
+        entity_id: "invented-id",
+        name: "Invented result",
+        type: "urn:entity",
+      };
+      expect(
+        classifyInsightsEntity({ ...base, subtype: expected }, expected),
+      ).toEqual({ accepted: true, reason: "accepted" });
+      expect(classifyInsightsEntity(base, expected)).toEqual({
+        accepted: false,
+        reason: "missing-or-wrong-subtype",
+      });
+      expect(
+        classifyInsightsEntity(
+          { ...base, subtype: "urn:entity:unknown" },
+          expected,
+        ),
+      ).toEqual({ accepted: false, reason: "missing-or-wrong-subtype" });
+      expect(
+        classifyInsightsEntity(
+          {
+            ...base,
+            subtype: expected,
+            types: [expected, "urn:entity:person"],
+          },
+          expected,
+        ),
+      ).toEqual({ accepted: false, reason: "conflicting-primary-domains" });
+    },
+  );
 
   it("accepts the owner-observed generic Book subtype under the shared policy", () => {
     expect(

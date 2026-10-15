@@ -2,6 +2,38 @@ import { AppError } from "./errors";
 
 const windows = new Map<string, { count: number; reset: number }>();
 
+function rejectedOrigin(): AppError {
+  return new AppError(
+    "ORIGIN",
+    "Planning requests must come from this site.",
+    403,
+  );
+}
+
+function configuredSiteOrigin(value: string): string {
+  try {
+    const url = new URL(value);
+    const local = url.hostname === "localhost" || url.hostname === "127.0.0.1";
+    if (
+      value === url.origin &&
+      (url.protocol === "https:" || (url.protocol === "http:" && local)) &&
+      url.pathname === "/" &&
+      !url.search &&
+      !url.hash &&
+      !url.username &&
+      !url.password
+    )
+      return url.origin;
+  } catch {
+    // An invalid server setting must not grant a browser origin.
+  }
+  throw new AppError(
+    "ORIGIN_CONFIG",
+    "The trusted site origin is invalid.",
+    503,
+  );
+}
+
 export function checkRequestOrigin(
   request: Request,
   production = process.env.NODE_ENV === "production",
@@ -11,15 +43,17 @@ export function checkRequestOrigin(
     request.headers.get("sec-fetch-site") === "cross-site" ||
     (production && !origin)
   )
-    throw new AppError(
-      "ORIGIN",
-      "Planning requests must come from this site.",
-      403,
-    );
+    throw rejectedOrigin();
   if (!origin) return;
   try {
     const source = new URL(origin);
     const target = new URL(request.url);
+    if (origin !== source.origin) throw rejectedOrigin();
+    const serverOrigin = process.env.CROSSFADE_SITE_ORIGIN;
+    const expected =
+      production && serverOrigin !== undefined
+        ? configuredSiteOrigin(serverOrigin)
+        : target.origin;
     const loopback = (host: string) =>
       host === "localhost" || host === "127.0.0.1";
     const localAlias =
@@ -28,18 +62,10 @@ export function checkRequestOrigin(
       loopback(target.hostname) &&
       source.port === target.port &&
       source.protocol === target.protocol;
-    if (source.origin !== target.origin && !localAlias)
-      throw new AppError(
-        "ORIGIN",
-        "Planning requests must come from this site.",
-        403,
-      );
-  } catch {
-    throw new AppError(
-      "ORIGIN",
-      "Planning requests must come from this site.",
-      403,
-    );
+    if (source.origin !== expected && !localAlias) throw rejectedOrigin();
+  } catch (error) {
+    if (error instanceof AppError) throw error;
+    throw rejectedOrigin();
   }
 }
 

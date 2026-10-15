@@ -2,9 +2,9 @@
 
 **Turn cultural differences into experiences worth sharing.** CROSSFADE is an agentic cultural negotiation prototype for the [Qloo Agentic Hackathon](https://qloo.devpost.com/). It builds a three-act cultural program for two audiences, using separate taste queries, shared entity IDs, explicit constraints, and visible decision traces.
 
-> **Current status:** The local end-to-end journey works with **SYNTHETIC / NOT REAL QLOO DATA**. The account owner independently observed authenticated Artist Search HTTP 200 with three valid entities, Movie Insights HTTP 200 with five accepted entities, and Book Insights HTTP 200 with five valid generic-type entities carrying exact Book subtypes. The Book production parser now accepts this evidence-backed form in offline tests. Useful explainability content and the complete live journey remain unverified. Live film suggestions can be conceptual when verified runtime minutes are unavailable; they are not schedules. No public demo has been deployed or submitted.
+> **Current status:** The local end-to-end journey works with **SYNTHETIC / NOT REAL QLOO DATA**. The owner observed authenticated Artist Search and Movie/Book Insights, then ran one real fixed two-audience P1 plan that ended **NO COMPLETE PATH**: each domain had zero shared IDs in the bounded pages. A separate artist-only Bridge experiment returned 20 candidates for both audiences under the same filter, but cultural compatibility is **unverified** and Bridge is not in the product planner. No complete live three-domain recommendation or public demo has been verified. Live film suggestions can be conceptual when verified runtime minutes are unavailable; they are not schedules.
 
-The implementation is under review in [PR #1](https://github.com/HivMindAI/crossfade-ai/pull/1) on `feature/crossfade-mvp`; `main` has not been merged. The public repository's current default `main` contains only `LICENSE`, so reviewers should open the feature branch until a reviewed merge or default-branch change is separately authorized. The [Milestone 5 CI run passed](https://github.com/HivMindAI/crossfade-ai/actions/runs/38137301753). Current offline verification is recorded in [the validation log](docs/VALIDATION.md).
+The implementation is under review in [PR #1](https://github.com/HivMindAI/crossfade-ai/pull/1) on `feature/crossfade-mvp`; `main` has not been merged. The public repository's current default `main` contains only `LICENSE`, so reviewers should open the feature branch until a reviewed merge or default-branch change is separately authorized. Current offline verification is recorded in [the validation log](docs/VALIDATION.md); review CI against the exact published feature-branch SHA before treating this release candidate as checked remotely.
 
 ## Run locally
 
@@ -33,7 +33,7 @@ npm run test:e2e
 
 On a local machine with Chrome already installed, Playwright uses that installation. In CI it installs its own Chromium build.
 
-The owner completed the bounded three-request Search, Movie Insights, and Book Insights smoke diagnostic. Its last run confirmed the Book subtype shape but predated the Book parser repair. Repeat only for a new, separately authorized contract question; this command makes at most three sequential GETs with no redirects or retries:
+The owner completed the bounded three-request Search, Movie Insights, and Book Insights smoke diagnostic. Its last run confirmed the Book subtype shape but predated the Book parser repair. The subsequent P1 and separate Bridge observations are recorded in [validation](docs/VALIDATION.md). Repeat the smoke only for a new, separately authorized contract question; this command makes at most three sequential GETs with no redirects or retries:
 
 ```bash
 npm run qloo:smoke -- --live-once
@@ -50,6 +50,8 @@ Set `QLOO_API_KEY` privately in the local process environment before an authoriz
 5. **Repair:** Rejection or a changed rule triggers a new run. Qloo exclusions are sent upstream and checked again locally. The interface names the rejected entity, its evidence-backed replacement or unresolved outcome, and whether the revised path is duration-verified or conceptual. Domain cards distinguish missing source results, missing overlap, exclusions, known metadata failures, and retrieval-budget limits. Valid partial evidence stays visible but is never called a complete plan.
 
 Rank sums are an **algorithmic ordering device**, not confidence, probabilities, or comparable affinity values from different Qloo requests. Qloo-returned evidence, recognized per-result influence signals, constraints, missing evidence, and creative framing are shown separately. The sequence and experience framing are creative interpretations. No LLM is used; the tool-using orchestration and negotiation are deterministic, bounded code.
+
+The artist-only [Bridge study](docs/BRIDGE_EXPERIMENT.md) demonstrated filtered candidate coverage in one owner-observed run, not positive affinity or improved human satisfaction. Its [independent acceptance protocol](docs/BRIDGE_EXPERIMENT.md#minimal-human-acceptance-gate-not-yet-run) is pending. For a first external URL, the [deployment runbook](docs/DEPLOYMENT.md#first-public-url-synthetic-only-render-free-preview) recommends a separately authorized **synthetic-only** Render Free preview. It would not validate Live Qloo or replace the public live security gate.
 
 The public Qloo reference does not specify a movie runtime field with a guaranteed unit. The live client therefore does not treat a numeric `properties.duration` as verified minutes. A live conceptual path requires independent runtime and rating verification before scheduling, plus separate screening-rights, availability, ticketing, and venue checks.
 
@@ -81,8 +83,8 @@ More details: [architecture](docs/ARCHITECTURE.md), [Qloo contract](docs/QLOO.md
 
 ## Deployment and submission gate
 
-Milestones 6–9I are local release-candidate work and have no CI result until authorized publication. See the [exact publication procedure](docs/PUBLICATION.md). [Bridge Discovery](docs/BRIDGE_EXPERIMENT.md) is a documented experiment hypothesis; the production planner still uses shared-ID intersection. No authenticated Bridge request or public interface exists.
+This release candidate is tracked on `feature/crossfade-mvp`; check CI against its exact published SHA. See the [exact publication procedure](docs/PUBLICATION.md). [Bridge Discovery](docs/BRIDGE_EXPERIMENT.md) has one owner-observed artist-only result; the production planner still uses shared-ID intersection. No Bridge public interface exists.
 
-`vercel.json` configures the Next.js framework; use an eligible free tier only after its terms and limits have been checked by the account owner. Configure `QLOO_API_KEY` and the shared Redis token only as server-side secrets. The Redis guard is implemented and offline-tested, but **no real provider configuration or public abuse test has been verified**. Align its ceiling with Qloo's issued limit and add an edge per-source rule where available. Do not submit until authenticated Qloo and public end-to-end tests pass separately. Deployment has **not** been authorized. See [deployment gates](docs/DEPLOYMENT.md) and the [submission checklist](docs/SUBMISSION.md).
+`vercel.json` configures the Next.js framework; use an eligible free tier only after its terms and limits have been checked by the account owner. Configure `QLOO_API_KEY` and the shared Redis token only as server-side secrets. The Redis guard is implemented, offline-tested, and owner-verified on a disposable Upstash key, but **no public abuse control has been verified**. Align its ceiling with Qloo's issued limit and add an edge per-source rule where available. Do not submit until authenticated Qloo and public end-to-end tests pass separately. Deployment has **not** been authorized. See [deployment gates](docs/DEPLOYMENT.md) and the [submission checklist](docs/SUBMISSION.md).
 
 The existing [MIT license](LICENSE) is preserved.

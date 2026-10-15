@@ -7,14 +7,16 @@
     "dev": "next dev",
     "build": "next build --webpack",
     "start": "next start",
-    "lint": "eslint src e2e scripts next.config.ts playwright.config.ts vitest.config.ts eslint.config.mjs postcss.config.mjs",
-    "format": "prettier --write src e2e scripts next.config.ts playwright.config.ts vitest.config.ts eslint.config.mjs postcss.config.mjs package.json .github/workflows/ci.yml",
-    "format:check": "prettier --check src e2e scripts next.config.ts playwright.config.ts vitest.config.ts eslint.config.mjs postcss.config.mjs package.json .github/workflows/ci.yml",
+    "lint": "eslint src e2e scripts next.config.ts playwright.config.ts playwright.production.config.ts vitest.config.ts eslint.config.mjs postcss.config.mjs",
+    "format": "prettier --write src e2e scripts next.config.ts playwright.config.ts playwright.production.config.ts vitest.config.ts eslint.config.mjs postcss.config.mjs package.json .github/workflows/ci.yml",
+    "format:check": "prettier --check src e2e scripts next.config.ts playwright.config.ts playwright.production.config.ts vitest.config.ts eslint.config.mjs postcss.config.mjs package.json .github/workflows/ci.yml",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
-    "qloo:smoke": "node scripts/qloo-smoke.mjs"
+    "test:e2e:production": "playwright test --config playwright.production.config.ts",
+    "qloo:smoke": "node scripts/qloo-smoke.mjs",
+    "bridge:experiment": "node scripts/bridge-experiment.mjs"
   },
   "dependencies": {
     "lucide-react": "^0.468.0",

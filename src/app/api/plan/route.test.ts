@@ -1,4 +1,4 @@
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { POST } from "./route";
 
 const requestBody = {
@@ -22,6 +22,8 @@ afterEach(() => {
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
 });
+
+beforeEach(() => vi.stubEnv("CROSSFADE_SITE_ORIGIN", undefined));
 
 it("fails closed in production live mode without a configured Qloo key", async () => {
   vi.stubEnv("NODE_ENV", "production");
@@ -129,3 +131,40 @@ it("rejects a cross-site request despite spoofed forwarding headers", async () =
   expect(response.status).toBe(403);
   expect(await response.json()).toMatchObject({ error: "ORIGIN" });
 });
+
+it.each([
+  ["foreign origin", "https://other.example", "same-origin"],
+  ["missing origin", undefined, "same-origin"],
+  ["null origin", "null", "same-origin"],
+  ["cross-site marker", "http://127.0.0.1:3100", "cross-site"],
+] as const)(
+  "rejects %s before any Redis or Qloo transport",
+  async (_label, origin, fetchSite) => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("CROSSFADE_SITE_ORIGIN", "http://127.0.0.1:3100");
+    vi.stubEnv("QLOO_API_KEY", "invented-offline-key");
+    vi.stubEnv("QLOO_LIVE_ENABLED", "1");
+    vi.stubEnv("UPSTASH_REDIS_REST_URL", "https://offline-fixture.upstash.io");
+    vi.stubEnv("UPSTASH_REDIS_REST_TOKEN", "invented-offline-token");
+    const transport = vi.fn();
+    vi.stubGlobal("fetch", transport);
+    const headers = new Headers({
+      "Content-Type": "application/json",
+      Host: "127.0.0.1:3100",
+      "X-Forwarded-Host": "127.0.0.1:3100",
+      "X-Forwarded-Proto": "http",
+      "Sec-Fetch-Site": fetchSite,
+    });
+    if (origin !== undefined) headers.set("Origin", origin);
+    const response = await POST(
+      new Request("http://localhost:3100/api/plan", {
+        method: "POST",
+        headers,
+        body: JSON.stringify(requestBody),
+      }),
+    );
+    expect(response.status).toBe(403);
+    expect(await response.json()).toMatchObject({ error: "ORIGIN" });
+    expect(transport).not.toHaveBeenCalled();
+  },
+);

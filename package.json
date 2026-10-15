@@ -1,0 +1,45 @@
+{
+  "name": "crossfade-ai",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build --webpack",
+    "start": "next start",
+    "lint": "eslint src e2e scripts next.config.ts playwright.config.ts playwright.production.config.ts vitest.config.ts eslint.config.mjs postcss.config.mjs",
+    "format": "prettier --write src e2e scripts next.config.ts playwright.config.ts playwright.production.config.ts vitest.config.ts eslint.config.mjs postcss.config.mjs package.json .github/workflows/ci.yml",
+    "format:check": "prettier --check src e2e scripts next.config.ts playwright.config.ts playwright.production.config.ts vitest.config.ts eslint.config.mjs postcss.config.mjs package.json .github/workflows/ci.yml",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "test:e2e:production": "playwright test --config playwright.production.config.ts",
+    "qloo:smoke": "node scripts/qloo-smoke.mjs",
+    "bridge:experiment": "node scripts/bridge-experiment.mjs"
+  },
+  "dependencies": {
+    "lucide-react": "^0.468.0",
+    "next": "16.4.0",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "server-only": "^0.0.1",
+    "zod": "^4.1.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.58.0",
+    "@tailwindcss/postcss": "^4.3.3",
+    "@testing-library/jest-dom": "^6.6.0",
+    "@testing-library/react": "^16.3.0",
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "eslint": "^9.0.0",
+    "eslint-config-next": "16.4.0",
+    "jsdom": "^26.0.0",
+    "prettier": "^3.9.10",
+    "tailwindcss": "4.3.3",
+    "typescript": "^5.9.0",
+    "vitest": "^5.0.3"
+  }
+}

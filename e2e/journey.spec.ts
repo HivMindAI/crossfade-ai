@@ -76,11 +76,14 @@ test("shows a no-solution state for impossible film rules", async ({
   page,
 }) => {
   await page.goto("/");
-  await page.locator('input[type="range"]').first().fill("60");
+  const filmLimit = page.getByRole("slider", { name: /Maximum film length/ });
+  await filmLimit.focus();
+  await filmLimit.press("Home");
+  await expect(page.getByText("Maximum film length 60 min")).toBeVisible();
+  await page.locator(".rating-list label").nth(3).click();
   await page.locator(".rating-list label").nth(0).click();
   await page.locator(".rating-list label").nth(1).click();
   await page.locator(".rating-list label").nth(2).click();
-  await page.locator(".rating-list label").nth(3).click();
   await page.getByRole("button", { name: "Find the shared ground" }).click();
   await expect(
     page.getByRole("heading", {
@@ -187,6 +190,37 @@ test("editing a constraint clears the prior plan until it is reevaluated", async
   await expect(page.getByText("3 DURATION-CHECKED PATHS")).toBeVisible();
   await page.getByRole("slider", { name: /Maximum film length/ }).fill("90");
   await expect(page.getByText("3 DURATION-CHECKED PATHS")).toHaveCount(0);
+  await expect(
+    page.getByText(/Your shared experience begins here/),
+  ).toBeVisible();
+});
+
+test("the last film rating stays selected for mouse and keyboard without clearing a successful result", async ({
+  page,
+}) => {
+  await page.goto("/");
+  const ratings = page.getByRole("group", { name: "Allowed film ratings" });
+  await ratings.getByRole("checkbox", { name: "G", exact: true }).uncheck();
+  await ratings.getByRole("checkbox", { name: "PG", exact: true }).uncheck();
+  await page.getByRole("button", { name: "Find the shared ground" }).click();
+  await expect(page.locator(".results-meta")).toContainText("DURATION-CHECKED");
+  const priorResult = await page.locator(".results-meta").textContent();
+  const last = ratings.getByRole("checkbox", { name: "PG-13" });
+  await last.click();
+  await expect(last).toBeChecked();
+  await expect(ratings).toContainText(
+    "Keep at least one film rating selected.",
+  );
+  await expect(page.locator(".results-meta")).toHaveText(priorResult ?? "");
+  await last.focus();
+  await last.press("Space");
+  await expect(last).toBeChecked();
+  await expect(page.locator(".results-meta")).toHaveText(priorResult ?? "");
+  await ratings.getByRole("checkbox", { name: "R", exact: true }).check();
+  await expect(ratings).toContainText("Choose at least one film rating.");
+  await last.focus();
+  await last.press("Space");
+  await expect(last).not.toBeChecked();
   await expect(
     page.getByText(/Your shared experience begins here/),
   ).toBeVisible();

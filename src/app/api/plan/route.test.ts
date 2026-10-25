@@ -42,6 +42,43 @@ it("fails closed in production live mode without a configured Qloo key", async (
   expect(await response.json()).toMatchObject({ error: "MISSING_KEY" });
 });
 
+it.each([
+  [
+    "oversized collection",
+    JSON.stringify({
+      ...requestBody,
+      constraints: {
+        ...requestBody.constraints,
+        allowedRatings: Array(1000).fill("PG"),
+      },
+    }),
+    400,
+    "INVALID_INPUT",
+  ],
+  ["malformed JSON", "{", 400, "INVALID_JSON"],
+  ["oversized body", " ".repeat(16_385), 413, "REQUEST_SIZE"],
+] as const)(
+  "rejects %s before any provider request",
+  async (_label, body, status, error) => {
+    vi.stubEnv("NODE_ENV", "production");
+    const transport = vi.fn();
+    vi.stubGlobal("fetch", transport);
+    const response = await POST(
+      new Request("https://crossfade.example/api/plan", {
+        method: "POST",
+        headers: {
+          Origin: "https://crossfade.example",
+          "Content-Type": "application/json",
+        },
+        body,
+      }),
+    );
+    expect(response.status).toBe(status);
+    expect(await response.json()).toMatchObject({ error });
+    expect(transport).not.toHaveBeenCalled();
+  },
+);
+
 it("does not dispatch live Qloo planning when the launch switch is off", async () => {
   vi.stubEnv("NODE_ENV", "production");
   vi.stubEnv("QLOO_API_KEY", "offline-test-value");

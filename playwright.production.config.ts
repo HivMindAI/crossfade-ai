@@ -15,7 +15,7 @@ export default defineConfig({
     headless: true,
   },
   webServer: {
-    command: `npm run start -- --hostname 127.0.0.1 --port ${port}`,
+    command: `node node_modules/next/dist/bin/next start --hostname 127.0.0.1 --port ${port}`,
     url: origin,
     reuseExistingServer: false,
     timeout: 120_000,

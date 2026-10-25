@@ -20,21 +20,21 @@ const entity = z.object({
   duration: rank.optional(),
   contentRating: text.optional(),
   explainability: z.enum(["available", "unavailable"]).optional(),
-  influence: z.array(influence).optional(),
+  influence: z.array(influence).max(3).optional(),
   evidenceWarning: text.optional(),
   retrievedRank: rank.optional(),
 });
 const candidate = z.object({
   entity,
   ranks: pair(rank),
-  signals: pair(z.array(text)),
+  signals: pair(z.array(text).max(3)),
   source: z.enum(["synthetic", "qloo"]),
-  influences: pair(z.array(influence)),
+  influences: pair(z.array(influence).max(3)),
   explanation: text,
   receipt: z.object({
-    checked: z.array(text).min(1),
-    unverified: z.array(text),
-    limitations: z.array(text).min(1),
+    checked: z.array(text).min(1).max(20),
+    unverified: z.array(text).max(20),
+    limitations: z.array(text).min(1).max(20),
   }),
 });
 const retrieval = z.enum([
@@ -55,26 +55,30 @@ const schema: z.ZodType<PlanResult> = z.object({
         path: z.enum(["fairness", "audience-a", "audience-b"]),
         programMinutes: rank.nullable(),
         scheduleStatus: z.enum(["duration-verified", "conceptual"]),
-        unverified: z.array(z.enum(["runtime", "content rating"])),
+        unverified: z.array(z.enum(["runtime", "content rating"])).max(2),
         rationale: text,
       }),
     )
     .max(3),
-  resolved: pair(z.array(entity.pick({ id: true, name: true, domain: true }))),
-  audit: z.array(
-    z.object({
-      step: z.enum([
-        "PLAN",
-        "SELECT TOOLS",
-        "EXECUTE",
-        "EVALUATE",
-        "VERIFY",
-        "REPLAN",
-      ]),
-      detail: text,
-    }),
+  resolved: pair(
+    z.array(entity.pick({ id: true, name: true, domain: true })).max(3),
   ),
-  gaps: z.array(text),
+  audit: z
+    .array(
+      z.object({
+        step: z.enum([
+          "PLAN",
+          "SELECT TOOLS",
+          "EXECUTE",
+          "EVALUATE",
+          "VERIFY",
+          "REPLAN",
+        ]),
+        detail: text,
+      }),
+    )
+    .max(20),
+  gaps: z.array(text).max(4),
   alternativesNote: text,
   warning: text.optional(),
   diagnostics: z

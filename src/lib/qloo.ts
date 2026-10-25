@@ -46,7 +46,10 @@ const rawEntity = z
     name: z.string().trim().min(1),
     type: z.string().optional(),
     subtype: z.string().optional(),
-    properties: z.record(z.string(), z.unknown()).optional(),
+    properties: z
+      .record(z.string(), z.unknown())
+      .refine((properties) => Object.keys(properties).length <= 100)
+      .optional(),
     query: z
       .object({ explainability: z.unknown().optional() })
       .passthrough()
@@ -57,13 +60,13 @@ const searchEnvelope = z
   .object({
     success: z.boolean().optional(),
     // Item validation is Search-specific and shared with the bounded smoke.
-    results: z.array(z.unknown()),
+    results: z.array(z.unknown()).max(100),
   })
   .passthrough();
 const insightsEnvelope = z
   .object({
     success: z.boolean().optional(),
-    results: z.object({ entities: z.array(rawEntity) }),
+    results: z.object({ entities: z.array(rawEntity).max(50) }),
   })
   .passthrough();
 

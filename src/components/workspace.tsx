@@ -112,6 +112,7 @@ export function Workspace() {
   const [busy, setBusy] = useState(false);
   const [longWait, setLongWait] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [ratingError, setRatingError] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [view, setView] = useState<"blueprint" | "evidence" | "trace">(
     "blueprint",
@@ -144,6 +145,10 @@ export function Workspace() {
     previous?: Blueprint,
     rejectedId?: string,
   ) {
+    if (next.constraints.allowedRatings.length === 0) {
+      setRatingError(true);
+      return;
+    }
     const rejected = previous?.candidates.find(
       (item) => item.entity.id === rejectedId,
     );
@@ -726,8 +731,19 @@ export function Workspace() {
                   }}
                 />
               </label>
-              <fieldset>
+              <fieldset
+                aria-describedby="rating-guidance"
+                aria-invalid={ratingError}
+              >
                 <legend>Allowed film ratings</legend>
+                <p
+                  id="rating-guidance"
+                  role={ratingError ? "alert" : undefined}
+                >
+                  {ratingError
+                    ? "Keep at least one film rating selected."
+                    : "Choose at least one film rating."}
+                </p>
                 <div className="rating-list">
                   {(["G", "PG", "PG-13", "R", "NC-17"] as const).map(
                     (rating) => (
@@ -738,6 +754,14 @@ export function Workspace() {
                             rating,
                           )}
                           onChange={(event) => {
+                            if (
+                              !event.target.checked &&
+                              input.constraints.allowedRatings.length === 1
+                            ) {
+                              setRatingError(true);
+                              return;
+                            }
+                            setRatingError(false);
                             markDirty();
                             const next = copied(input);
                             next.constraints.allowedRatings = event.target

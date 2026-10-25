@@ -121,6 +121,49 @@ describe("Qloo client", () => {
       },
     });
   });
+  it("bounds provider result arrays and entity properties before accepting an envelope", async () => {
+    const fetcher = transport(async (url) =>
+      url.pathname === "/search"
+        ? searchEnvelope(Array(101).fill(null))
+        : envelope(
+            Array.from({ length: 51 }, (_, index) => ({
+              entity_id: `artist-${index}`,
+              name: `Artist ${index}`,
+              type: "urn:entity:artist",
+            })),
+          ),
+    );
+    const client = new QlooClient("offline-test-key", fetcher);
+    await expect(
+      client.search("Artist", "artist", { take: 100 }),
+    ).rejects.toMatchObject({ code: "QLOO_MALFORMED" });
+    await expect(client.insights("artist", ["seed"], [])).rejects.toMatchObject(
+      { code: "QLOO_MALFORMED" },
+    );
+    expect(fetcher).toHaveBeenCalledTimes(2);
+
+    const propertiesClient = new QlooClient(
+      "offline-test-key",
+      transport(async () =>
+        envelope([
+          {
+            entity_id: "artist-1",
+            name: "Artist 1",
+            type: "urn:entity:artist",
+            properties: Object.fromEntries(
+              Array.from({ length: 101 }, (_, index) => [
+                `key-${index}`,
+                index,
+              ]),
+            ),
+          },
+        ]),
+      ),
+    );
+    await expect(
+      propertiesClient.insights("artist", ["seed"], []),
+    ).rejects.toMatchObject({ code: "QLOO_MALFORMED" });
+  });
   it("accepts only the hackathon host before sending a key", async () => {
     const calls: URL[] = [];
     const fetcher = transport(async (url) => {

@@ -1386,7 +1386,7 @@ export function Workspace() {
               : "LIVE QLOO MODE"}
           </span>
           <a
-            href="https://github.com/HivMindAI/crossfade-ai"
+            href="https://github.com/HivMindAI/crossfade-ai/tree/feature/crossfade-mvp"
             target="_blank"
             rel="noreferrer"
           >

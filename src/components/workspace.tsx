@@ -1293,6 +1293,13 @@ export function Workspace() {
                       )}
                       {view === "trace" && (
                         <div className="trace-list">
+                          {result.mode === "synthetic" && (
+                            <p className="trace-provenance" role="note">
+                              SYNTHETIC TRACE · These source-call steps used
+                              invented local fixtures. No Qloo API requests were
+                              made.
+                            </p>
+                          )}
                           {result.audit.map((action, index) => (
                             <div className="trace-item" key={index}>
                               <span className="trace-index">0{index + 1}</span>

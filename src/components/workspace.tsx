@@ -420,54 +420,14 @@ export function Workspace() {
               </a>
             </div>
             <div className="hero-note">
-              <span className="pulse-dot" /> Synthetic preview · Not real Qloo
-              data
+              <span className="pulse-dot" /> Development preview · Synthetic
+              evidence is clearly labeled
             </div>
           </div>
           <div className="hero-art" aria-hidden="true">
             <div className="orbit orbit-one" />
             <div className="orbit orbit-two" />
             <div className="orbit orbit-three" />
-            <div className="flow-stream flow-stream-a" />
-            <div className="flow-stream flow-stream-b" />
-            <svg
-              className="stream-lines"
-              viewBox="0 0 600 680"
-              preserveAspectRatio="none"
-            >
-              <defs>
-                <linearGradient
-                  id="stream-cyan"
-                  x1="0%"
-                  y1="0%"
-                  x2="100%"
-                  y2="100%"
-                >
-                  <stop offset="0%" stopColor="#76e4ed" stopOpacity="0" />
-                  <stop offset="68%" stopColor="#76e4ed" stopOpacity=".8" />
-                  <stop offset="100%" stopColor="#c5b5ff" stopOpacity=".9" />
-                </linearGradient>
-                <linearGradient
-                  id="stream-violet"
-                  x1="100%"
-                  y1="100%"
-                  x2="0%"
-                  y2="0%"
-                >
-                  <stop offset="0%" stopColor="#c5b5ff" stopOpacity="0" />
-                  <stop offset="68%" stopColor="#c5b5ff" stopOpacity=".8" />
-                  <stop offset="100%" stopColor="#ffab98" stopOpacity=".9" />
-                </linearGradient>
-              </defs>
-              <path
-                d="M -20 90 C 142 93 65 302 178 335 S 260 368 300 374"
-                stroke="url(#stream-cyan)"
-              />
-              <path
-                d="M 620 618 C 462 614 522 440 414 408 S 342 382 300 374"
-                stroke="url(#stream-violet)"
-              />
-            </svg>
             <div className="record record-a">
               <span>
                 GROUP A<br />
